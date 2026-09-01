@@ -140,7 +140,7 @@ comparison is apples-to-apples rather than an old baseline.
 needed); ON capture already proven opaque (7.61 bits/byte, zero terms
 found).
 
-**Evidence file:** `evidence/2026-08-2X_marina_off_on.md`, referencing the
+**Evidence file:** `evidence/2026-08-2X_psk_off_on.md`, referencing the
 existing ON evidence rather than duplicating it.
 
 ---
