@@ -28,10 +28,26 @@ certificate can send one.
 That is what DTLS 1.3 does, and both box types use it — the noise units and
 the air units alike.
 
-**The one thing you must never lose:** the certificate authority's private key,
-`ca-key.pem`. It lives on the server. Copy it to a USB stick, put the stick in
-a drawer, and keep it off the internet. If you lose it you cannot make any new
-boxes, and every existing box has to be rebuilt from scratch.
+The authority has two halves:
+
+- **`ca-cert.pem`** — the public half. It is on every box and on the server,
+  and it is what the running system actually uses: each side checks the other's
+  certificate against it at every handshake.
+- **`ca-key.pem`** — the private half. It is used **only** when a new box is
+  built or the server is rebuilt. The running system never touches it.
+
+**The private half does not have to be on the server.** Keeping it there is a
+convenience — it lets you make a new box on the spot without fetching a drive.
+It can instead live only on a USB stick in a drawer, off the internet, and be
+plugged in just for the few minutes it takes to build a box. That stricter
+arrangement is [deploy/SETUP_MANUAL.md](deploy/SETUP_MANUAL.md), "Path B".
+Either way:
+
+> **Back up `ca-key.pem` together with `ca-cert.pem` to a second offline
+> place.** If you lose the private half you cannot make any new boxes, and
+> every existing box has to be rebuilt from scratch. Anyone who *copies* it can
+> make a box your whole fleet will trust — so it goes in exactly two places and
+> nowhere else.
 
 ---
 
@@ -321,8 +337,10 @@ Open **https://smartageing.local** on the server.
 
 - **Time buttons** — 15 minutes, 1 hour, 6 hours, 24 hours, 7 days. They
   change what the two charts show.
-- **Noise chart and air chart** — one coloured line per unit, updating live.
-  A unit's colour is derived from its name, so it stays the same every time.
+- **Noise chart and air chart** — one dot for every reading as it arrives, not
+  a joined line. Each unit has its own colour, derived from its name, so it
+  stays the same every time. A reading that triggered an alarm is drawn as a
+  larger solid dot.
 - **Event log** — the most recent readings as they arrive, newest first.
 - **Alarm banner** — appears across the top when a unit reports an alarm.
 

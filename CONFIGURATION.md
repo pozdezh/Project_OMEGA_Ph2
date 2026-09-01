@@ -313,8 +313,8 @@ nobody changes one by accident while looking for something else.
 |---|---|
 | `device_config.json` | Allow-list, revocation list, heartbeats |
 | `sensor_data.db` | The readings |
-| `pki/` | The server's own certificate and the authority's certificate |
-| `pki_provisioning/` | The authority itself, including `ca-key.pem` |
+| `pki/` | The server's own certificate and the authority's **public** certificate — this is all the running system needs |
+| `pki_provisioning/` | The authority itself, including `ca-key.pem`. Present here only in the default install; it can instead be kept offline (see `MANUAL.md`) |
 | `/etc/cron.d/omega-maintenance` | The two nightly jobs and their settings |
 | `/etc/systemd/system/omega-listener.service` | The telemetry service |
 | `/etc/systemd/system/omega-web.service` | The dashboard service |
