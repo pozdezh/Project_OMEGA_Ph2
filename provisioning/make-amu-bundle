@@ -162,13 +162,31 @@ replacements = {
     "server_host": server_ip,
     "target_port": server_port,
 }
+
+# Commented OUT rather than rewritten. The example ships these two as
+# absolute paths under a user "omega" that exists on no unit this project
+# builds, and the right value cannot be known here: install_amu.sh installs
+# into $HOME/omega_amu of whatever account the card was imaged with, and this
+# tool runs on the server, before the card has an account. amu_config.py's
+# own defaults are exactly right - pki and offline_buffer.json beside the
+# code - but a key that is PRESENT never falls back to its default, so
+# leaving the example's value in place sent the DTLS client looking for its
+# certificates in a directory that does not exist. Cloned units escaped this
+# by inheriting the donor's already-correct file; bundle-built ones did not.
+drop = ("pki_dir", "buffer_file")
 out = []
 for line in open(source, encoding="utf-8"):
     stripped = line.lstrip()
     key = stripped.split("=", 1)[0].strip() if "=" in stripped else ""
-    if key in replacements and not stripped.startswith((";", "#")):
+    if stripped.startswith((";", "#")):
+        out.append(line)
+    elif key in replacements:
         indent = line[:len(line) - len(stripped)]
         out.append("%s%s = %s\n" % (indent, key, replacements.pop(key)))
+    elif key in drop:
+        indent = line[:len(line) - len(stripped)]
+        out.append("%s; %s left unset on purpose - the code defaults to the\n" % (indent, key))
+        out.append("%s; directory it is installed in, which is correct on every unit.\n" % indent)
     else:
         out.append(line)
 missing = ", ".join(sorted(replacements))

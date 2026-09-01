@@ -15,7 +15,13 @@
 #  - certificates are validated up front so the listener never boots keyless.
 
 set -u
-INSTALLER_VERSION="2026-08-29a-wolfssl-pinned"
+INSTALLER_VERSION="2026-09-01a-port-bind-config"
+
+# The port the whole fleet is built to send to. Devices carry it compiled in
+# (make-units writes OMEGA_SERVER_PORT into every NMU's config.h) or in their
+# config file (make-amu-bundle writes target_port into every AMU's
+# global.ini), so changing it here means rebuilding every device.
+OMEGA_UDP_PORT="${OMEGA_UDP_PORT:-11400}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PAYLOAD="$SCRIPT_DIR/payload"
@@ -73,8 +79,9 @@ copy_payload() {
   # Replace code every time; treat config specially below.
   for f in listener.py session.py storage.py cause_validation.py config_store.py acks.py \
            nmu_mailbox.py identity_guard.py db_retention.py daily_stats.py clear_database.py \
-           device_api.py mcp_server.py device_live.py discovery.py app.py \n           device_addresses.py requirements.txt; do
-    cp "$PAYLOAD/$f" "$TARGET/$f"
+           device_api.py mcp_server.py device_live.py discovery.py app.py \
+           device_addresses.py requirements.txt; do
+    cp "$PAYLOAD/$f" "$TARGET/$f" || die 22 "payload file missing: $f"
   done
   cp "$PAYLOAD/templates/index.html" "$TARGET/templates/index.html"
 }
@@ -84,12 +91,22 @@ install_config() {
   # nmu/amu blocks) is stale and must be replaced, or the roster is empty and
   # every device is rejected. A valid Brick 3 config is preserved so operator
   # heartbeat/revocation edits survive an update.
+  #
+  # The file itself is git-ignored (it carries the operator's live revocation
+  # list), so what ships is device_config.example.json. Copying it is FATAL on
+  # failure: listener.py refuses to start without a parseable config - fail
+  # closed, so a missing revocation list can never be mistaken for an empty
+  # one - and a silent cp failure here left the listener crash-looping while
+  # the dashboard came up empty, which reads as a device fault rather than an
+  # install fault.
   local dst="$TARGET/device_config.json"
+  local src="$PAYLOAD/device_config.example.json"
   if [ -f "$dst" ] && "$PY" -c "import json,sys; d=json.load(open('$dst')); sys.exit(0 if ('nmu' in d and 'amu' in d) else 1)" 2>/dev/null; then
-    log "keeping existing Brick 3 device_config.json"
+    log "keeping existing Brick 4 device_config.json"
   else
-    log "installing Brick 3 device_config.json (replacing any stale config)"
-    cp "$PAYLOAD/device_config.json" "$dst"
+    log "installing device_config.json from the shipped example (replacing any stale config)"
+    [ -f "$src" ] || die 23 "missing $src - the installer payload is incomplete"
+    cp "$src" "$dst" || die 23 "cannot write $dst"
   fi
 }
 
@@ -106,8 +123,8 @@ install_pki() {
 }
 
 write_service() {
-  # $1 name, $2 description, $3 exec-args
-  local name="$1" desc="$2" args="$3"
+  # $1 name, $2 description, $3 exec-args, $4 extra Environment= lines
+  local name="$1" desc="$2" args="$3" extra="${4:-}"
   sudo tee "/etc/systemd/system/$name.service" >/dev/null <<EOF || die 40 "cannot write $name.service"
 [Unit]
 Description=$desc
@@ -121,6 +138,7 @@ WorkingDirectory=$TARGET
 Environment=OMEGA_PKI_DIR=$TARGET/pki
 Environment=OMEGA_DEVICE_CONFIG=$TARGET/device_config.json
 Environment=OMEGA_DB=$TARGET/sensor_data.db
+$extra
 ExecStart=$PY $args
 Restart=always
 RestartSec=3
@@ -135,8 +153,24 @@ install_services() {
   # Disable it so only the active Brick 4 stack starts after boot.
   sudo systemctl disable --now smart_listener.service smart_web.service \
     >/dev/null 2>&1 || true
-  write_service "omega-listener" "Omega true-DTLS listener" "$TARGET/listener.py"
-  write_service "omega-web" "Omega dashboard" "$TARGET/app.py"
+  # OMEGA_PORT is NOT optional here. listener.py defaults to 5000, which is
+  # brick1's frozen port, while every device this brick provisions is built to
+  # send to 11400: make-units bakes it into each NMU's config.h and
+  # make-amu-bundle writes it into each AMU's global.ini. Leaving it unset
+  # produced a server listening on the wrong port in complete silence - no
+  # error on either side, just a fleet that never arrives.
+  write_service "omega-listener" "Omega true-DTLS listener" "$TARGET/listener.py" \
+    "Environment=OMEGA_PORT=$OMEGA_UDP_PORT"
+
+  # OMEGA_WEB_HOST is what makes the client-certificate gate real. app.py
+  # defaults to 0.0.0.0 so a bare `python app.py` is usable during
+  # development; in this deployment nginx terminates TLS on 443 and demands a
+  # client certificate, then proxies to 127.0.0.1:8081. Left on 0.0.0.0 the
+  # same dashboard - including the routes that revoke a device and push a new
+  # heartbeat - is also reachable as plain HTTP on :8081 by anyone on the
+  # LAN, which walks straight past that gate.
+  write_service "omega-web" "Omega dashboard" "$TARGET/app.py" \
+    "Environment=OMEGA_WEB_HOST=127.0.0.1"
   sudo systemctl daemon-reload || die 40 "systemctl daemon-reload failed"
   sudo systemctl enable --now omega-listener omega-web >/dev/null 2>&1 || die 40 "failed to enable services"
   sudo systemctl restart omega-listener omega-web || die 40 "failed to (re)start services"
@@ -173,7 +207,9 @@ install_gateway() {
   # Plain HTTP on :80 issues a redirect to HTTPS rather than serving content.
   if ! command -v nginx >/dev/null 2>&1; then
     sudo apt-get install -y nginx >/dev/null 2>&1 || {
-      log "WARNING: nginx not installed - dashboard stays on :8081 only"
+      log "WARNING: nginx not installed - no HTTPS gateway. The dashboard is"
+      log "WARNING: bound to 127.0.0.1:8081, so it is reachable ONLY from a"
+      log "WARNING: browser running on this server, not from the network."
       return 0
     }
   fi
@@ -187,7 +223,9 @@ install_gateway() {
   local key="$TARGET/pki/omega-server-key.pem"
   local ca="$TARGET/pki/ca-cert.pem"
   if [ ! -f "$cert" ] || [ ! -f "$key" ] || [ ! -f "$ca" ]; then
-    log "WARNING: server cert/key/CA not found in $TARGET/pki - dashboard stays on :8081"
+    log "WARNING: server cert/key/CA not found in $TARGET/pki - no HTTPS"
+    log "WARNING: gateway. The dashboard is bound to 127.0.0.1:8081, so it is"
+    log "WARNING: reachable ONLY from a browser running on this server."
     return 0
   fi
 
@@ -234,11 +272,13 @@ NGINX
   if sudo nginx -t >/dev/null 2>&1 && sudo systemctl restart nginx >/dev/null 2>&1; then
     log "gateway up: https://smartageing.local (client certificate required)"
   else
-    # Never a quiet warning: without this gateway the dashboard and its
-    # config-writing routes are reachable on plain :8081 by anyone on the LAN.
-    log "SECURITY: nginx gateway did NOT come up. The dashboard is served"
-    log "SECURITY: unauthenticated over plain HTTP on :8081. Diagnose with"
-    log "SECURITY: 'sudo nginx -t' before letting anyone use this server."
+    # Never a quiet warning. It is not a security hole any more - the
+    # dashboard binds to 127.0.0.1, so a missing gateway means no remote
+    # access rather than unauthenticated remote access - but it does mean
+    # nobody can reach the dashboard from another machine until nginx works.
+    log "WARNING: nginx gateway did NOT come up. The dashboard is bound to"
+    log "WARNING: 127.0.0.1:8081 and is therefore reachable only from a"
+    log "WARNING: browser on this server. Diagnose with 'sudo nginx -t'."
     sudo nginx -t 2>&1 | sed 's/^/    /'
   fi
 

@@ -85,9 +85,14 @@ unit's next scheduled re-handshake.
 | `diagrams/` | Figure generators used by the memo |
 | `reference/` | `brick1_omega_crypto.py`, the frozen AES-GCM module reproduced as rung C of the four-rung comparison |
 
-Start with **`START_HERE.md`** to rebuild the system, and
-**`REPLICATION_AUDIT.md`** for an honest account of what that procedure has
-and has not been observed doing end to end.
+### Where to start
+
+| If you want to… | Read |
+|---|---|
+| **Build, run and change the system** | **[`MANUAL.md`](MANUAL.md)** — the full user manual. No programming assumed. |
+| **Know which file or setting to edit** | **[`CONFIGURATION.md`](CONFIGURATION.md)** — organised by what you want to change, with every default read out of the source |
+| Rebuild it quickly, having done it before | `START_HERE.md` |
+| Judge how far the procedure is verified | `REPLICATION_AUDIT.md` — an honest account of what has and has not been observed end to end |
 
 ---
 

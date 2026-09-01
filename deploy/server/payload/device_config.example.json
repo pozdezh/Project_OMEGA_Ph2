@@ -1,0 +1,12 @@
+{
+  "devices": [],
+  "revoked": [],
+  "nmu": {
+    "cfg_ver": 1,
+    "hb": 30
+  },
+  "amu": {
+    "cfg_ver": 1,
+    "hb": 30
+  }
+}

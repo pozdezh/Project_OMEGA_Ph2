@@ -44,7 +44,11 @@ def copied_files(installer_path):
         for token in block.replace("\\\n", " ").split():
             if token.endswith(".py") or token.endswith(".txt"):
                 names.add(token)
-    return {os.path.basename(n) for n in names}
+    # Relative paths, not basenames: the AMU installer copies
+    # config/global.ini.example, which lives in a subdirectory of the payload.
+    # Flattening it to a basename made the existence check look for it in the
+    # payload root and report a file that is present as missing.
+    return names
 
 
 def local_imports(py_path, payload_dir):
@@ -75,26 +79,36 @@ def check(label, installer_path, payload_dir):
     if not os.path.exists(installer_path):
         print("  MISSING installer"); return 1
     copied = copied_files(installer_path)
+    # Imports resolve by module name, so the import walk below compares
+    # against basenames while the existence check above uses the real
+    # relative path.
+    copied_basenames = {os.path.basename(n) for n in copied}
     print("  installer copies %d payload file(s)" % len(copied))
 
     problems = 0
     for name in sorted(copied):
-        if not name.endswith(".py"):
-            continue
+        # Existence is checked for EVERY copied file, whatever its extension.
+        # This loop used to skip anything that was not a .py before it got as
+        # far as the existence check, and so walked straight past a missing
+        # device_config.example.json - the one file whose absence stops the
+        # listener from starting at all. The import walk below is still
+        # Python-only, because only Python files have imports.
         source = os.path.join(payload_dir, name)
         if not os.path.exists(source):
             print("  FAIL %s is copied but is NOT in the payload" % name)
             problems += 1
             continue
+        if not name.endswith(".py"):
+            continue
         for needed in sorted(local_imports(source, payload_dir)):
-            if needed not in copied:
+            if needed not in copied_basenames:
                 print("  FAIL %s imports %s, which the installer does NOT copy "
                       "- a fresh install dies at startup" % (name, needed))
                 problems += 1
 
     orphans = sorted(
         f for f in os.listdir(payload_dir)
-        if f.endswith(".py") and f not in copied and f not in OPTIONAL)
+        if f.endswith(".py") and f not in copied_basenames and f not in OPTIONAL)
     if orphans:
         print("  NOTE payload files never copied (intentional?): %s"
               % ", ".join(orphans))

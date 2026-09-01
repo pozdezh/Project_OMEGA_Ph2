@@ -35,7 +35,7 @@
 #   ./install_hub.sh --only pki   run one phase
 
 set -u
-HUB_VERSION="2026-08-28a-clone-amu-card"
+HUB_VERSION="2026-09-01a-pki-tool-staged"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUNDLE="$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd || echo "$SCRIPT_DIR")"
@@ -310,6 +310,20 @@ phase_tools() {
   rm -rf "$OMEGA/factory/firmware"
   cp -r "$firmware" "$OMEGA/factory/firmware"
 
+  # Stage the PKI tool where the AMU launchers below tell the card tools to
+  # look for it. Every omega-*-amu-* wrapper exports
+  # OMEGA_PKI_TOOL="$OMEGA/omega_pki.py", and clone-amu-card and
+  # make-amu-bundle both refuse to run if that file is absent - so without
+  # this copy the AMU tools were installed and immediately dead. It used to
+  # appear only as a side effect of running omega-make-units first, which
+  # made building an air unit silently depend on having built a noise unit.
+  local pki_tool_src
+  if pki_tool_src="$(find_in_bundle provisioning/omega_pki.py)"; then
+    cp "$pki_tool_src" "$OMEGA/omega_pki.py" && ok "omega_pki.py staged in $OMEGA"
+  else
+    miss "omega_pki.py not found in the bundle - the AMU card tools will not run"
+  fi
+
   # A one-line launcher rather than a copy of the tool: the tool stays the
   # single source of truth, and the launcher supplies the hub's paths.
   {
@@ -355,6 +369,13 @@ phase_tools() {
         echo "export OMEGA_HOME=\"$OMEGA\""
         echo "export OMEGA_PKI_DIR=\"$PKI_DIR\""
         echo "export OMEGA_PKI_TOOL=\"$OMEGA/omega_pki.py\""
+        # make-amu-bundle writes its tarballs to $HOME/amu_bundles and prints
+        # an scp command naming that path. The card tools beside it need sudo,
+        # so the two get typed the same way out of habit - and under sudo
+        # $HOME is /root, which put the bundle somewhere the operator could
+        # not read and printed a copy command that could not work. Pinning it
+        # here makes the tool behave identically with or without sudo.
+        echo "export OMEGA_BUNDLE_OUT=\"$HOME/amu_bundles\""
         echo "exec \"$amu_maker\" \"\$@\""
       } > "$BIN_DIR/omega-$amu_tool"
       chmod +x "$BIN_DIR/omega-$amu_tool"
