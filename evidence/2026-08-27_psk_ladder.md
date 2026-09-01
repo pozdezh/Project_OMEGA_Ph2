@@ -1,19 +1,20 @@
-# Marina's ladder, climbed on our own hardware: one reading, four protections
+# The four-rung ladder, run on this project's own hardware: one reading, four protections
 
 Run 2026-08-27 06:51-06:57 CEST on the deployed fleet. Subject: **AMU_T1**
 (192.168.0.115), a live production unit, while it kept doing its normal job.
 
-This is the OFF-vs-ON comparison Marina Rull's TFG uses throughout her
-evaluation chapter, applied to this system - and extended from her two rungs
-to four, so it also answers "why not just do what Marina did?"
+This is the OFF-versus-ON comparison used throughout the evaluation chapter of
+the parallel pre-shared-key project (Rull Ventura), applied to this system and
+extended from that project's two rungs to four, so it also answers "why not
+simply adopt the predecessor's design?"
 
 Scripts (both committed, this is the how):
-- `simlab/marina_ladder_emit.py` - ran on AMU_T1
-- `simlab/marina_ladder_analyse.py` - ran on the dev PC against the capture
+- `simlab/psk_ladder_emit.py` - ran on AMU_T1
+- `simlab/psk_ladder_analyse.py` - ran on the dev PC against the capture
 
 Raw evidence:
-- `captures/2026-08-27_marina_ladder.pcap` (534 datagrams, 226 kB)
-- `captures/2026-08-27_marina_ladder_analysis.txt` (the analyser's own output)
+- `captures/2026-08-27_psk_ladder.pcap` (534 datagrams, 226 kB)
+- `captures/2026-08-27_psk_ladder_analysis.txt` (the analyser's own output)
 
 ---
 
@@ -22,7 +23,7 @@ Raw evidence:
 | Rung | Protection | Represents |
 |---|---|---|
 | **A** | none, plain JSON over UDP | the pre-security state; EmotiBit's original protocol |
-| **B** | AES-128-**ECB** + HMAC-SHA256, pre-shared key | **Marina's actual design** |
+| **B** | AES-128-**ECB** + HMAC-SHA256, pre-shared key | **the predecessor's actual design** |
 | **C** | AES-256-**GCM** | **her stated future work** == Omega brick1 |
 | **D** | **DTLS 1.3**, mutual-auth PKI | Omega brick4, in production |
 
@@ -57,7 +58,7 @@ experiment.
 session (the sudo password never enters a command Claude runs):
 
 ```
-sudo timeout 360 tcpdump -i any -s 0 -w /tmp/marina_ladder_20260827.pcap \
+sudo timeout 360 tcpdump -i any -s 0 -w /tmp/psk_ladder_20260827.pcap \
   'udp port 11400 or udp port 11501 or udp port 11502 or udp port 11503'
 ```
 
@@ -65,7 +66,7 @@ Emitter, on the AMU:
 
 ```
 LADDER_DEVICE_ID=AMU_T1 LADDER_SERVER=192.168.0.112 \
-LADDER_RECORDS=110 LADDER_INTERVAL_S=3.0 python3 marina_ladder_emit.py
+LADDER_RECORDS=110 LADDER_INTERVAL_S=3.0 python3 psk_ladder_emit.py
 ```
 
 The analyser **learns** the AMU's address from the rung A packets and filters
@@ -93,7 +94,7 @@ record. Rungs B, C and D yield **zero hits on every term**.
 
 ## 4. The finding that matters
 
-**Entropy alone cannot tell Marina's scheme apart from ours.** Rung B scores
+**Entropy alone cannot tell the pre-shared-key scheme apart from ours.** Rung B scores
 7.90 bits/byte against rung C's 7.98 and rung D's 7.91. On that test - the
 test our own earlier evidence file `2026-08-26_live_wire_capture.md` leans on -
 AES-128-ECB passes and looks just as encrypted as DTLS 1.3.
@@ -116,7 +117,7 @@ the constant JSON scaffolding sits in every record.
 GCM and DTLS 1.3 score zero because each record gets a fresh nonce, so
 identical plaintext never produces identical ciphertext twice.
 
-**This is precisely the weakness Marina names in her own Future Work (7.1)**,
+**This is precisely the weakness the predecessor's own future work names (7.1)**,
 where she identifies AES-GCM as the natural next step. This run measures that
 gap on real sensor data from a real deployed unit, rather than restating it.
 
@@ -145,7 +146,7 @@ advance except a CA certificate, and can retire one unit from a web page.
   5.5-minute window yields four. Four records is enough to show 0/129
   repeats but it is a smaller sample than rungs A-C, and is stated as such.
   It is consistent with rung C's 0/3303 over the same AEAD reasoning.
-- **Rung B is our reconstruction**, from Marina's documented design
+- **Rung B is our reconstruction**, from the predecessor's documented design
   (per-device pre-shared key, AES-128-ECB, HMAC-SHA256 over the ciphertext so
   the tag is checked before decrypting). It is **not her source code**, which
   was not available to us. If her implementation differs in a detail, the ECB
@@ -169,7 +170,7 @@ advance except a CA certificate, and can retire one unit from a web page.
 
 **Proves**, on deployed hardware, over real UDP, with the same payload:
 - cleartext telemetry is completely readable, including device identity
-- Marina's ECB scheme hides every value but leaks the repetition structure
+- the ECB scheme hides every value but leaks the repetition structure
 - AES-GCM (her proposed improvement, our brick1) closes that leak
 - DTLS 1.3 closes it too, and additionally replaces a pre-shared secret with
   a per-device certificate that can be revoked

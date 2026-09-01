@@ -1,4 +1,4 @@
-"""Marina-style OFF/ON ladder: emit ONE real AMU reading four ways at once.
+"""OFF-versus-ON OFF/ON ladder: emit ONE real AMU reading four ways at once.
 
 Runs ON a live AMU. Reads the sampling loop's own live cache (the file
 main.py rewrites every cycle) and re-sends that SAME payload over three
@@ -6,7 +6,7 @@ unprotected-to-less-unprotected channels, while the production service
 carries the identical data over DTLS 1.3 on its real port untouched.
 
   rung A  plain JSON over UDP        - the pre-security state
-  rung B  AES-128-ECB + HMAC-SHA256  - Marina Rull's TFG design
+  rung B  AES-128-ECB + HMAC-SHA256  - the parallel pre-shared-key project (Rull Ventura) design
   rung C  AES-256-GCM                - her stated future work == Omega brick1
   rung D  DTLS 1.3 mutual-auth PKI   - Omega brick4, NOT emitted here; it is
                                        the production service doing its job
@@ -22,7 +22,7 @@ test is what an EAVESDROPPER can read off the wire, and a packet on the wire
 is on the wire whether or not anything accepts it. It also means the server
 needs no change of any kind for this experiment.
 
-Rung B is a faithful reconstruction of Marina's DOCUMENTED design (per-device
+Rung B is a faithful reconstruction of the predecessor's DOCUMENTED design (per-device
 pre-shared key, AES-128-ECB, HMAC-SHA256 over the ciphertext so the MAC is
 checked before decrypting). It is NOT her source code, which was not
 available. Rung C imports brick1's real frozen omega_crypto.py unmodified.
@@ -84,7 +84,7 @@ def build_payload(device_id, reading, event, cause):
 
 
 def seal_ecb_hmac(key, plaintext):
-    """Marina's construction: AES-128-ECB over PKCS7-padded plaintext, then
+    """the predecessor's construction: AES-128-ECB over PKCS7-padded plaintext, then
     HMAC-SHA256 appended over the ciphertext. Encrypt-then-MAC, so a
     receiver checks the cheap 32-byte tag before decrypting anything."""
     padder = padding.PKCS7(AES_BLOCK_BITS).padder()
@@ -125,10 +125,10 @@ def main():
     session_id = int(time.time()) & 0xFFFFFFFF
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-    print("Marina ladder: %s -> %s" % (device_id, SERVER))
+    print("Rull Ventura ladder: %s -> %s" % (device_id, SERVER))
     print("live cache    : %s" % LIVE_CACHE)
     print("rung A port   : %d  cleartext JSON" % PORT_CLEARTEXT)
-    print("rung B port   : %d  AES-128-ECB + HMAC-SHA256 (Marina)" % PORT_ECB_HMAC)
+    print("rung B port   : %d  AES-128-ECB + HMAC-SHA256 (predecessor)" % PORT_ECB_HMAC)
     print("rung C port   : %d  AES-256-GCM (brick1)" % PORT_GCM)
     print("rung D        : the production DTLS 1.3 service, untouched")
     print("records       : %d every %.1fs" % (RECORD_COUNT, RECORD_INTERVAL_S))

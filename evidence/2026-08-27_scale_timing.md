@@ -14,8 +14,8 @@ MILLISECOND (02:33:51.747711-.747714), with four independent ACKs returning -
 proof the server holds multiple authenticated DTLS sessions concurrently
 rather than serialising them.
 
-**Corroborating breadth, from this session's Marina-ladder capture**
-(`2026-08-27_marina_ladder.pcap`, 5.5 minutes, incidental to that
+**Corroborating breadth, from this session's PSK-ladder capture**
+(`2026-08-27_psk_ladder.pcap`, 5.5 minutes, incidental to that
 experiment): **16 distinct device IPs** contacted the server on port 11400
 in the window - the complete real fleet, all active inside one short
 capture with no coordination or forced trigger. Peak same-second overlap in
@@ -66,8 +66,8 @@ dressed up as one.
 this session adds exactly one (NMU_21), by a different method than the
 original two. Real n=3 total, not the fuller spread originally scoped.
 No AMU handshake timing is available from this session - AMU_T1 held one
-continuous DTLS session throughout the Marina-ladder run
-(`2026-08-27_marina_ladder.md` section 6), so no fresh AMU handshake
+continuous DTLS session throughout the PSK-ladder run
+(`2026-08-27_psk_ladder.md` section 6), so no fresh AMU handshake
 occurred to time.
 
 ## 3. What this does and does not prove
@@ -90,4 +90,4 @@ not by this file.
 - `2026-08-26_boot_discovery_handshake.md` - NMU_18 device-logged timings
 - `2026-08-27_nmu21_handshake_recapture.md` - source capture for the
   network-observed NMU_21 timing derived in section 2 above
-- `2026-08-27_marina_ladder.pcap` - source of the 16-distinct-device count
+- `2026-08-27_psk_ladder.pcap` - source of the 16-distinct-device count

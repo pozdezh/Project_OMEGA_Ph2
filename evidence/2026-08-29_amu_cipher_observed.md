@@ -150,8 +150,8 @@ configured, two outcomes - visible in the ClientHello, not just inferred.
 - **NMU<->server negotiates `TLS_AES_128_GCM_SHA256`** - matches the 6+
   prior serial logs from `wolfSSL_get_cipher()` on the device itself.
 - All AMU units run the identical `wolfssl` PyPI build (5.9.2.post0, full
-  `--enable-opensslall`), so the Marina-ladder rung D session (AMU_T1,
-  `2026-08-27_marina_ladder.md`) used this same suite:
+  `--enable-opensslall`), so the PSK-ladder rung D session (AMU_T1,
+  `2026-08-27_psk_ladder.md`) used this same suite:
   **`TLS_AES_256_GCM_SHA384`**. The ladder's entropy (7.91 bits/byte) and
   block-repetition (0/129) results for rung D were therefore measured on an
   **AES-256-GCM** session - and would be identical on the NMU's AES-128-GCM,

@@ -169,7 +169,7 @@ argument for 1.3 in this project, and it is now evidence rather than a claim.
 ## 5. Finding: the AMU does not discover in normal operation
 
 Recorded because it corrects an overstatement, and because it would be a fair
-question at a defense.
+question about the system's behaviour.
 
 **The claim as previously stated** - "the fleet finds its server by itself" -
 is true of the NMU and **not currently true of the AMU**.

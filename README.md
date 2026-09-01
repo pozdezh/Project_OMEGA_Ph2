@@ -105,7 +105,7 @@ with `tcpdump -i any`, which is why every one carries a Linux cooked-mode
 (SLL2) link header.
 
 One capture deliberately contains readable telemetry.
-`2026-08-27_marina_ladder.pcap` transmits one unit's live readings four ways
+`2026-08-27_psk_ladder.pcap` transmits one unit's live readings four ways
 at once, and its first rung is unprotected plaintext on purpose, because
 demonstrating a defence means showing the undefended case beside it. The data
 in it is environmental readings from the author's own test unit.

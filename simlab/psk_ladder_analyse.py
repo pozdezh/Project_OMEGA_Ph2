@@ -1,6 +1,6 @@
-"""Measure the Marina ladder capture: what an eavesdropper actually gets.
+"""Measure the Rull Ventura ladder capture: what an eavesdropper actually gets.
 
-Reads the pcap taken while marina_ladder_emit.py ran, splits it into the
+Reads the pcap taken while psk_ladder_emit.py ran, splits it into the
 four rungs by UDP port, and scores each on the same axes. Reads the raw
 pcap directly - no Wireshark or tshark needed, and no decryption of
 anything: this only looks at bytes that are already in the clear on the
@@ -17,7 +17,7 @@ Axes, and why each one is here:
   entropy          bits per byte; plain JSON lands near 4-5, ciphertext
                    near 8. Below ~7.5 means structure is leaking
   repeated blocks  identical 16-byte ciphertext blocks across the whole
-                   rung. This is the ECB weakness Marina named in her own
+                   rung. This is the ECB weakness Rull Ventura named in her own
                    future work: with no IV and one fixed key, equal
                    plaintext blocks always produce equal ciphertext blocks,
                    so an observer sees which records share content
@@ -152,7 +152,7 @@ def readable_terms(records):
 
 def main():
     if len(sys.argv) < 2:
-        print("usage: marina_ladder_analyse.py <capture.pcap>", file=sys.stderr)
+        print("usage: psk_ladder_analyse.py <capture.pcap>", file=sys.stderr)
         return 2
     path = sys.argv[1]
 

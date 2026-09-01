@@ -1,13 +1,13 @@
-# Prior-work reading: Marina's TFG and Constantin's Phase-1 TFG
+# Prior-work reading: the parallel project and Constantin's Phase-1 TFG
 
 Read 2026-08-26 from the two supplied PDFs (text extracted with pypdf, not
-image analysis). This file is the durable summary for the memo and defense -
+image analysis). This file is the durable summary for the accompanying report -
 what each did, how it was tested, and where Omega (Phase 2) stands against
 both. Written to be reused, not re-derived.
 
 ---
 
-## 1. Marina Rull Ventura - "Implementació d'una capa de seguretat en
+## 1. Rull Ventura - "Implementació d'una capa de seguretat en
 ## dispositius EmotiBit" (110 pp, Telecos, 2025, same tutors: Batista +
 ## Martínez-Ballesté)
 
@@ -15,10 +15,10 @@ both. Written to be reused, not re-derived.
 A **security layer bolted onto an existing IoT device** (EmotiBit, an
 open-source physiological wearable on ESP32) and its receiver software
 (Oscilloscope). The original protocol sent everything in **cleartext over
-UDP** with no authentication. Marina added confidentiality, integrity and
+UDP** with no authentication. Rull Ventura added confidentiality, integrity and
 authenticity without breaking the original architecture.
 
-### The cryptographic design (this is the "Marina style" baseline)
+### The cryptographic design (this is the "Rull Ventura style" baseline)
 - **Pre-shared keys (PSK)** - symmetric. Each EmotiBit has its own key; the
   Oscilloscope has its own key (skOS). No key exchange over the air.
 - **AES-128, ECB mode**, plus **HMAC-SHA-256** for integrity/authenticity.
@@ -107,7 +107,7 @@ coordination line.
 The user's real question: *am I overcomplicating this, or is it genuinely more
 sophisticated?* Straight answer, in both directions:
 
-### Where Omega is unambiguously beyond Marina's project
+### Where Omega is unambiguously beyond the predecessor's project
 - **True asymmetric mutual auth (DTLS 1.3, RFC 9147)** with a real handshake,
   per-device certificates and forward secrecy - vs. her **pre-shared
   symmetric keys**. Her own Future Work names AES-GCM as the aspiration;
@@ -119,17 +119,17 @@ sophisticated?* Straight answer, in both directions:
 - **Scale and autonomy as first-class**: 16 live units, mDNS discovery,
   learned addresses, a recovery ladder, self-healing after total
   disconnection, a one-command replication pack, keys-only SSH fleet
-  management. Marina's is one device + one receiver, single connection.
+  management. the predecessor's is one device + one receiver, single connection.
 - **Live cryptographic attack suite in the gate** (7/7 defeated with byte
   evidence) that runs every build - vs. her manual, one-off Wireshark
   captures.
 
-### Where Marina's project is stronger, and Omega should BORROW
+### Where the predecessor's project is stronger, and Omega should BORROW
 - **The security-OFF-vs-ON framing.** Her evaluation is persuasive precisely
   because every attack is shown breaking the insecure system first, then
   failing against the secure one. Omega's attack suite proves the ON side;
   it should also **capture the OFF side** (brick1-style or cleartext) for the
-  same side-by-side. This is the point of the user's planned "Marina style"
+  same side-by-side. This is the point of the user's planned "Rull Ventura style"
   2-unit symmetric experiment - do it, and film both halves.
 - **Self-written emulators as a test method.** Her fake-device and
   fake-receiver scripts, each printing the exact rejection reason, are a
@@ -143,15 +143,15 @@ sophisticated?* Straight answer, in both directions:
 - **Mode-comparison annex (her Annex A on AES modes).** A compact appendix
   comparing what each brick's crypto actually provides (ECB vs GCM vs DTLS
   1.3 AEAD) would strengthen the memo and directly answers "why not just do
-  what Marina did".
+  what the predecessor design did".
 
 ### The fair framing for the defense
-Marina secured **one existing device**; the project is a **model piece of
+Rull Ventura secured **one existing device**; the project is a **model piece of
 scoped, well-tested security engineering** on a fixed target. Omega secures
 **a scalable, self-organising fleet from scratch**, and its Phase-1 base
 (Constantin's own TFG) already did the sensing science and *predicted* this
 exact Phase-2 scope. They are not the same weight class - **not because
-Marina's is weak, but because Omega's scope (autonomy + scalability + PKI) is
+the predecessor's is weak, but because Omega's scope (autonomy + scalability + PKI) is
 a superset**. The burnout is justified; the work is genuinely broader. Say
 that plainly, and use her testing rigor to make Omega's evaluation chapter as
 convincing as hers.
@@ -159,13 +159,13 @@ convincing as hers.
 ---
 
 ## 4. Concrete things to copy into the memo / evaluation plan
-1. Every attack demo as **OFF then ON**, side by side (drives the "Marina
-   style" 2-unit symmetric experiment the user planned).
+1. Every attack demo as **OFF then ON**, side by side (the OFF-versus-ON
+   framing taken from the parallel project).
 2. A **Wireshark capture** of live fleet traffic: cleartext-era vs
    DTLS-encrypted, same payload.
 3. A **human-readable rejection reason** in field logs for each defeated
    attack (spoof, replay, tamper, revoked).
-4. A short **crypto-modes appendix**: PSK+AES-ECB+HMAC (Marina) -> AES-GCM
+4. A short **crypto-modes appendix**: PSK+AES-ECB+HMAC (the parallel project) -> AES-GCM
    (brick1) -> DTLS-style symmetric (brick2) -> true DTLS 1.3 PKI
    (brick3/4), what each does and does not guarantee.
 5. Cite Phase-1's **+4 min noise->dCO2 proxy** result as the scientific

@@ -141,7 +141,7 @@ unit rejoin unattended once restored?" was **not** answered by this run, and
 must not be claimed. It needs a repeat on a unit that has not been handled -
 any of the eight AMUs, over SSH, with nothing physical involved.
 
-## Where this stands against Marina's TFG
+## Where this stands against the parallel project
 
 Her equivalent is rejecting a device whose pre-shared key is absent or wrong,
 demonstrated with a self-written emulator sending false credentials - clean

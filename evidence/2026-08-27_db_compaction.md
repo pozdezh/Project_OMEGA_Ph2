@@ -4,7 +4,7 @@ Run 2026-08-27 07:34 CEST. Subject: a byte-for-byte copy of the deployed
 `sensor_data.db`, made with SQLite's own backup API
 (`sqlite3 sensor_data.db ".backup <copy>"`), which is safe against a
 concurrently-writing process - this is the same technique used for the
-boss-endpoint test, and unlike that test this one is genuinely destructive
+statistics-endpoint test, and unlike that test this one is genuinely destructive
 (it deletes rows), so it ran ONLY against the copy, never the live file.
 The copy was removed after the run; nothing here is a permanent artifact.
 

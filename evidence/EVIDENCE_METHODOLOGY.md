@@ -53,7 +53,7 @@ calls "proven" in the memo's evaluation chapter.
 
 ## The rule: a claim is only evidence when observed from outside
 
-Method borrowed deliberately from Marina Rull's TFG (final-year thesis),
+Method borrowed deliberately from the parallel pre-shared-key project (Rull Ventura) (final-year thesis),
 credited as such in `EXPERIMENT_REGISTER.md`: **a passing test proves the
 code agrees with itself; a capture, a log, or a query proves the deployed
 thing behaved.**

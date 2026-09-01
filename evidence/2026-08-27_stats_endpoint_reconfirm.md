@@ -1,4 +1,4 @@
-# Boss-endpoint push: already built, was already working, found silently broken
+# Statistics-endpoint push: already built, was already working, found silently broken
 
 Run 2026-08-27 07:15-07:26 CEST on the deployed server, against the REAL
 production database (`~/omega_brick4/sensor_data.db`). No copy was needed:
@@ -8,7 +8,7 @@ could have disturbed live data.
 
 ## What this corrects
 
-`NEXT_SESSION.md` (2026-08-27 05:10) states the boss-endpoint push "works
+`NEXT_SESSION.md` (2026-08-27 05:10) states the statistics-endpoint push "works
 but only PRINTS ... until OMEGA_STATS_URL/OMEGA_STATS_TOKEN hold the real
 research-unit endpoint." That was already stale when written. The real
 state, discovered before touching anything:

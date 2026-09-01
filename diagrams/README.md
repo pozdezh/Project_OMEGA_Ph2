@@ -1,6 +1,6 @@
 # Project Omega - Brick 4 - system diagram
 
-One schematic, for the memo, the defence slides, the GitHub repo and
+One schematic, for the accompanying report, this repository and
 LinkedIn. `system_overview.py` places every box and every connector by hand,
 so nothing crosses and the proportions are fixed.
 

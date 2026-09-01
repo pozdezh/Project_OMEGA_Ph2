@@ -112,10 +112,10 @@ live DB (2026-08-21 audit). This test runs it for real.
 
 ---
 
-## #11 - Marina-style OFF vs ON
+## #11 - OFF-versus-ON OFF vs ON
 
 **Claim under test.** Side by side, the same payload is fully readable
-unprotected and fully opaque protected - Marina's own OFF/ON framing,
+unprotected and fully opaque protected - that same OFF/ON framing,
 applied to this system.
 
 **Setup.** Need a genuine cleartext capture to sit beside the existing

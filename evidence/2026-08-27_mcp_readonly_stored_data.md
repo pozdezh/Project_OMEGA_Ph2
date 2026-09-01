@@ -53,7 +53,7 @@ elsewhere, so a second pass removes the ambiguity entirely.
 ## 3. Dynamic check, second pass - against a frozen snapshot
 
 Made with SQLite's own backup API, same technique as the retention and
-boss-endpoint tests, so no concurrent writer can touch it during the run:
+statistics-endpoint tests, so no concurrent writer can touch it during the run:
 
 ```
 before: noise_data rows=42741  sha256[:16]=2496f79ffcaaf46d

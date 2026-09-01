@@ -16,7 +16,7 @@ development machine, against invented devices - and says so.
 
 This is the other half, and the half a reader believes without trusting any of
 our code: **a packet capture of the deployed system, taken from outside it.**
-The technique is borrowed from Marina Rull's TFG, where every claim is shown
+The technique is borrowed from the parallel pre-shared-key project (Rull Ventura), where every claim is shown
 as a Wireshark capture rather than a passing test.
 
 ## What the capture shows

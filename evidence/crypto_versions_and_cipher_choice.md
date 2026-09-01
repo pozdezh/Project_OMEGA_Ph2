@@ -384,7 +384,7 @@ constrained noise unit and a capable air-quality unit therefore reach
 - **AMU -> `TLS_AES_256_GCM_SHA384`** - because on a Raspberry Pi it costs
   nothing.
 
-Why this is a strength, for the memo and the defence:
+Why this is a strength, in the accompanying report:
 
 1. **The negotiation is real, not a rubber stamp** - two clients, two
    outcomes, one unmodified server. Adding a device class with different

@@ -344,7 +344,7 @@ research.
   (`crypto_versions_and_cipher_choice.md` 2.6). Tied to the ESP-IDF
   migration in section 11.
 - **The daily-statistics push has no real destination yet.** The sender,
-  retry and idempotency logic is built and soaked (`2026-08-27_boss_endpoint_reconfirm.md`);
+  retry and idempotency logic is built and soaked (`2026-08-27_stats_endpoint_reconfirm.md`);
   `OMEGA_STATS_URL` and `OMEGA_STATS_TOKEN` are placeholders until the
   research unit supplies an endpoint. Until then it prints the report rather
   than losing it.
