@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Make NMU Units
+Comment=Create and flash new Omega noise-monitoring units
+Exec=bash -c 'cd "$(dirname "%k")" && ./make-units'
+Icon=applications-electronics
+Terminal=true
+Categories=Utility;

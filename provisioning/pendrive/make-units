@@ -1,0 +1,486 @@
+#!/usr/bin/env bash
+# Omega unit maker. Runs FROM THE PENDRIVE on the server PC.
+#
+# Nothing is copied by hand. This script installs whatever the server is
+# missing, signs each unit with the CA key on this drive, builds its firmware,
+# flashes it, and tells you when to swap boards.
+#
+# See ARCHITECTURE.md 24 and 27.
+
+set -u
+
+TOOL_VERSION="2026-08-25e-fleet-numbering"
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CA_KEY="$HERE/ca/ca-key.pem"
+PAYLOAD="$HERE/payload"
+
+OMEGA="${OMEGA_HOME:-$HOME/omega_brick4}"
+PKI_DIR="$OMEGA/pki_provisioning"
+PKI_TOOL="$OMEGA/omega_pki.py"
+IDENTITY_TOOL="$OMEGA/identity_guard.py"
+IDENTITY_DB="$OMEGA/device_identities.json"
+DEVICE_CONFIG="$OMEGA/device_config.json"
+SRC="${OMEGA_FIRMWARE_SRC:-$HERE/firmware}"
+ARDUINO_CLI="${OMEGA_ARDUINO_CLI:-$HOME/bin/arduino-cli}"
+
+# Paths are DISCOVERED, never pinned to one version or one folder name.
+# Every hardcoded path here has already cost a real failure: the interpreter
+# was pinned to a leftover experiment folder, and the ESP32 tools to exact
+# version numbers that change on every core update. A tool a non-technical
+# person runs must find what is installed, not insist on what was installed
+# the day it was written.
+newest() { ls -d $1 2>/dev/null | sort -V | tail -1; }
+
+pick_python() {
+  local candidate
+  for candidate in "${OMEGA_PYTHON:-}" "$OMEGA/venv/bin/python"                    "$HOME/omega_spike13/venv/bin/python"                    "$(command -v python3 2>/dev/null)"; do
+    [ -n "$candidate" ] && [ -x "$candidate" ] && { printf '%s' "$candidate"; return 0; }
+  done
+  return 1
+}
+
+PYTHON="$(pick_python || true)"
+ESPTOOL="${OMEGA_ESPTOOL:-$(newest "$HOME/.arduino15/packages/esp32/tools/esptool_py/*/esptool")}"
+[ -x "$ESPTOOL" ] || ESPTOOL="${OMEGA_ESPTOOL:-$(newest "$HOME/.arduino15/packages/esp32/tools/esptool_py/*/esptool.py")}"
+BOOT_APP0="${OMEGA_BOOT_APP0:-$(newest "$HOME/.arduino15/packages/esp32/hardware/esp32/*/tools/partitions/boot_app0.bin")}"
+
+WORK_ROOT="${TMPDIR:-/tmp}/omega_make_units_$$"
+SKETCH="stage3_beta_2_dtls"
+FQBN="esp32:esp32:adafruit_feather_esp32s3_nopsram:CDCOnBoot=cdc"
+SERVER_PORT=11400
+HANDSHAKE_TIMEOUT_MS=8000
+ACK_TIMEOUT_MS=3000
+FLASH_BAUD=460800
+PORT_WAIT_S=90
+
+bold()  { printf '\033[1m%s\033[0m\n' "$*"; }
+green() { printf '\033[1;32m%s\033[0m\n' "$*"; }
+red()   { printf '\033[1;31m%s\033[0m\n' "$*"; }
+line()  { echo "=================================================="; }
+
+HAVE_TTY=0
+# Quietly: with no controlling terminal (run over ssh, or from a file
+# manager) the redirect fails, and a raw shell error here is exactly the
+# kind of thing that makes a non-technical operator stop and call someone.
+# The fallback below reads stdin instead and works fine.
+{ [ -r /dev/tty ] && exec 3</dev/tty && HAVE_TTY=1; } 2>/dev/null || true
+
+ask() {
+  local __var="$1" __prompt="$2" __silent="${3:-}" __value=""
+  if [ "$HAVE_TTY" = "1" ]; then
+    if [ -n "$__silent" ]; then read -r -s -p "$__prompt" __value <&3; echo
+    else read -r -p "$__prompt" __value <&3; fi
+  else
+    if [ -n "$__silent" ]; then read -r -s -p "$__prompt" __value || true; echo
+    else read -r -p "$__prompt" __value || true; fi
+  fi
+  printf -v "$__var" '%s' "$__value"
+}
+
+# Keeping the window open is only meaningful when a person is looking at it.
+# With no terminal at all (ssh, a checker script, CI) waiting for Enter waits
+# forever, which turns a passing check into a hang.
+pause_for_enter() {
+  local _ignored
+  if [ "$HAVE_TTY" = "1" ]; then read -r -p "$1" _ignored <&3; return 0; fi
+  [ -t 0 ] || return 0
+  read -r -p "$1" _ignored || true
+}
+
+finish() {
+  rm -rf "$WORK_ROOT"
+  echo
+  pause_for_enter "Press Enter to close this window. "
+}
+trap finish EXIT
+
+# Puts the drive's copy of a provisioning tool onto the server if the server
+# has none or an older one. This is what removes the manual copy step.
+sync_tool() {
+  local name="$1" dest="$OMEGA/$1"
+  [ -f "$PAYLOAD/$name" ] || return 0
+  mkdir -p "$OMEGA"
+  if [ ! -f "$dest" ] || ! cmp -s "$PAYLOAD/$name" "$dest"; then
+    cp "$PAYLOAD/$name" "$dest" && say_installed="$say_installed $name"
+  fi
+}
+
+preflight() {
+  local missing=0
+  bold "Checking this computer..."
+
+  if [ ! -f "$CA_KEY" ]; then
+    red "  The CA key is not on this drive (expected ca/ca-key.pem)."
+    echo "  Without it no unit can be given an identity."
+    missing=1
+  else
+    echo "  CA key found on the drive"
+  fi
+
+  say_installed=""
+  sync_tool omega_pki.py
+  sync_tool identity_guard.py
+  [ -n "$say_installed" ] && echo "  installed from drive:$say_installed"
+
+  for path in "$PYTHON" "$ARDUINO_CLI" "$ESPTOOL" "$BOOT_APP0"; do
+    [ -e "$path" ] || { red "  MISSING on this computer: $path"; missing=1; }
+  done
+  [ -d "$SRC" ] || { red "  MISSING firmware source: $SRC"; missing=1; }
+  for firmware_file in "$SRC"/*.ino "$SRC"/*.h "$SRC"/*.cpp "$SRC"/partitions.csv; do
+    [ -f "$firmware_file" ] || { red "  MISSING firmware file: $firmware_file"; missing=1; }
+  done
+  [ -f "$PKI_DIR/ca-cert.pem" ] || { red "  MISSING $PKI_DIR/ca-cert.pem"; missing=1; }
+  [ -f "$DEVICE_CONFIG" ] || { red "  MISSING $DEVICE_CONFIG"; missing=1; }
+
+  if [ "$missing" -ne 0 ]; then
+    echo; red "Cannot continue. Nothing was changed."
+    exit 1
+  fi
+  green "  All good."
+  echo
+}
+
+name_taken() {
+  local candidate="$1"
+  case " ${CHOSEN:-} " in *" $candidate "*) return 0 ;; esac
+  [ -f "$PKI_DIR/$candidate-cert.pem" ] && return 0
+  return 1
+}
+
+# Where this fleet's numbering starts. NMUs run from 16 and AMUs from 11;
+# the T-suffix units (NMU_T1, AMU_T1) are the originals and sit outside the
+# sequence rather than occupying 01. Suggesting NMU_02 invited an operator
+# to press Enter and get a name outside the scheme, which then has to be
+# lived with - a device id is bound to its certificate on first contact.
+FIRST_UNIT_NUMBER=16
+
+next_free_name() {
+  local n="$FIRST_UNIT_NUMBER" candidate
+  while :; do
+    candidate=$(printf "NMU_%02d" "$n")
+    name_taken "$candidate" || { echo "$candidate"; return; }
+    n=$((n + 1))
+  done
+}
+
+build_unit() {
+  local unit="$1" ssid="$2" pass="$3"
+  local sketch_dir="$WORK_ROOT/$unit/$SKETCH"
+
+  rm -rf "$WORK_ROOT/$unit"
+  mkdir -p "$sketch_dir" || return 1
+  cp -r "$SRC"/*.ino "$SRC"/*.h "$SRC"/*.cpp "$SRC"/partitions.csv \
+        "$sketch_dir"/ 2>/dev/null
+
+  if [ -f "$PKI_DIR/$unit-cert.pem" ]; then
+    echo "  reusing $unit's existing identity" >>"$LOG"
+  else
+    "$PYTHON" "$PKI_TOOL" device "$PKI_DIR" "$unit" \
+        --ca-key-dir "$(dirname "$CA_KEY")" >>"$LOG" 2>&1 || return 2
+  fi
+  "$PYTHON" "$PKI_TOOL" arduino "$PKI_DIR" "$unit" \
+      "$sketch_dir/omega_certs.h" >>"$LOG" 2>&1 || return 2
+  [ -s "$sketch_dir/omega_certs.h" ] || return 2
+
+  cat >"$sketch_dir/config.h" <<CONFIG
+#ifndef CONFIG_H
+#define CONFIG_H
+#define OMEGA_WIFI_SSID   "$ssid"
+#define OMEGA_WIFI_PASS   "$pass"
+#define OMEGA_SERVER_IP   ""
+#define OMEGA_SERVER_PORT $SERVER_PORT
+#define OMEGA_HANDSHAKE_TIMEOUT_MS $HANDSHAKE_TIMEOUT_MS
+#define OMEGA_ACK_TIMEOUT_MS       $ACK_TIMEOUT_MS
+#endif
+CONFIG
+
+  "$ARDUINO_CLI" compile --fqbn "$FQBN" \
+      --output-dir "$sketch_dir/build" "$sketch_dir" >>"$LOG" 2>&1 || return 3
+  [ -f "$sketch_dir/build/$SKETCH.ino.bin" ] || return 3
+  return 0
+}
+
+candidate_ports() {
+  local dev
+  for dev in /dev/ttyACM* /dev/ttyUSB*; do
+    [ -e "$dev" ] && printf '%s\n' "$dev"
+  done
+}
+
+# The USB vendor id behind a tty, read from sysfs. No bytes are sent to the
+# board, so the board does not notice it was asked.
+usb_vendor_of() {
+  local sys="/sys/class/tty/$(basename "$1")/device" depth=0
+  while [ "$depth" -lt 6 ]; do
+    [ -r "$sys/idVendor" ] && { cat "$sys/idVendor"; return 0; }
+    sys="$sys/.."
+    depth=$((depth + 1))
+  done
+  return 1
+}
+
+# WHY THIS DOES NOT ASK THE BOARD WHO IT IS.
+#
+# The obvious way to find the ESP32 is to run `esptool chip-id` on each
+# serial port and see which one answers. That is what this used to do, and it
+# is self-defeating: esptool resets the chip into its bootloader to talk to
+# it, the USB device re-enumerates under a DIFFERENT name, and the port name
+# just returned is already dead. Flashing then fails with "a device which
+# does not exist was specified" - reliably, on the FIRST attempt, every time.
+#
+# 303a = Espressif (the chip's own bootloader identity)
+# 239a = Adafruit  (the identity the running sketch presents)
+# The board answers to one or the other depending on what it is doing, so
+# both are accepted and neither is treated as the only valid one.
+find_esp32_port() {
+  local dev vendor
+  for dev in $(candidate_ports); do
+    vendor="$(usb_vendor_of "$dev" 2>/dev/null)" || continue
+    case "$vendor" in
+      303a|239a) printf '%s\n' "$dev"; return 0 ;;
+    esac
+  done
+  # Fallback only: a board behind a generic USB-serial adapter reports
+  # neither id. --before no-reset so even this probe leaves the port alone.
+  for dev in $(candidate_ports); do
+    if "$ESPTOOL" --chip esp32s3 --port "$dev" --before no-reset chip-id 2>&1 \
+         | grep -q "ESP32-S3"; then
+      printf '%s\n' "$dev"; return 0
+    fi
+  done
+  return 1
+}
+
+wait_for_board() {
+  local waited=0 port
+  while [ "$waited" -lt "$PORT_WAIT_S" ]; do
+    if port=$(find_esp32_port); then echo "$port"; return 0; fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  return 1
+}
+
+verify_board() {
+  local port="$1" output
+  output=$("$ESPTOOL" --chip esp32s3 --port "$port" chip_id 2>&1) || return 1
+  printf '%s\n' "$output" >>"$LOG"
+  printf '%s\n' "$output" | grep -q "Chip is ESP32-S3"
+}
+
+# An EMPTY "devices" list means "any device holding a certificate this CA
+# signed may connect"; a non-empty one means "only these may". Appending the
+# first name therefore does not add one unit - it silently locks out every
+# unit already in the field. This runs while a fleet is live, so it refuses
+# to make that flip and leaves entry gated by the CA plus the revocation
+# list, which is where identity is actually enforced.
+register_unit() {
+  local unit="$1"
+  "$PYTHON" - "$DEVICE_CONFIG" "$unit" <<'PY'
+import json
+import os
+import sys
+
+path, device_id = sys.argv[1:]
+with open(path, "r", encoding="utf-8") as handle:
+  document = json.load(handle)
+devices = list(document.get("devices", []))
+if not devices:
+  print("  roster is open (CA trust gates entry) - not registering " + device_id)
+  sys.exit(0)
+if device_id in devices:
+  sys.exit(0)
+devices.append(device_id)
+document["devices"] = devices
+temporary = path + ".tmp"
+with open(temporary, "w", encoding="utf-8") as handle:
+  json.dump(document, handle, indent=2)
+  handle.flush()
+  os.fsync(handle.fileno())
+os.replace(temporary, path)
+print("  registered " + device_id + " on the server roster")
+PY
+}
+
+flash_unit() {
+  local unit="$1" port="$2"
+  local build_dir="$WORK_ROOT/$unit/$SKETCH/build"
+  local flash_log="$WORK_ROOT/$unit/flash.log"
+  : >"$flash_log"
+  "$ESPTOOL" --chip esp32s3 --port "$port" --baud "$FLASH_BAUD" \
+      --before default-reset --after watchdog-reset write-flash -z \
+      0x0     "$build_dir/$SKETCH.ino.bootloader.bin" \
+      0x8000  "$build_dir/$SKETCH.ino.partitions.bin" \
+      0xe000  "$BOOT_APP0" \
+      0x20000 "$build_dir/$SKETCH.ino.bin" >>"$flash_log" 2>&1
+  local rc=$?
+  cat "$flash_log" >>"$LOG"
+  # esptool can exit non-zero purely because the port vanishes during the
+  # reset it just performed. Four verified regions is the real success test.
+  local verified
+  verified=$(grep -c "Hash of data verified" "$flash_log")
+  [ "$verified" -ge 4 ] && return 0
+  return "$((rc == 0 ? 1 : rc))"
+}
+
+clear 2>/dev/null || true
+echo
+line
+bold "  Omega - make new NMU units   ($TOOL_VERSION)"
+line
+echo
+
+preflight
+
+# --check answers "will this work here?" without touching anything or
+# needing a board plugged in. Meant to be run first on an unfamiliar
+# computer, and to be quotable in a setup guide.
+if [ "${1:-}" = "--check" ]; then
+  echo "  interpreter: $PYTHON"
+  echo "  arduino-cli: $ARDUINO_CLI"
+  echo "  esptool:     $ESPTOOL"
+  echo "  boot_app0:   $BOOT_APP0"
+  echo "  server dir:  $OMEGA"
+  echo
+  green "This computer can make units."
+  exit 0
+fi
+
+ask WIFI_SSID "WiFi network name (SSID): "
+ask WIFI_PASS "WiFi password: " silent
+echo
+ask UNIT_COUNT "How many units do you want to make? "
+case "$UNIT_COUNT" in ''|*[!0-9]*) red "That is not a number."; exit 1 ;; esac
+[ "$UNIT_COUNT" -ge 1 ] || { red "Nothing to do."; exit 1; }
+
+echo
+echo "Name each unit. Press Enter to accept the suggested name."
+CHOSEN=""
+for _ in $(seq 1 "$UNIT_COUNT"); do
+  suggestion=$(next_free_name)
+  ask chosen "  Unit name [$suggestion]: "
+  chosen="${chosen:-$suggestion}"
+
+  # Same name twice in one batch is never right: two boards would be built
+  # from one identity in a single sitting, guaranteeing the collision.
+  case " ${CHOSEN:-} " in
+    *" $chosen "*)
+      red "  '$chosen' is already in this batch - two boards cannot share a name."
+      continue ;;
+  esac
+
+  # An existing certificate is NOT a reason to refuse. Re-flashing a unit is
+  # routine - a board dies and is replaced, or a unit is renamed - and the
+  # tool cannot tell that apart from a genuine clash, so it asks instead of
+  # deciding. Silently skipping was worse than either: it dropped the unit
+  # from the batch and then reported "No unit names given", which reads like
+  # the operator typed nothing.
+  if [ -f "$PKI_DIR/$chosen-cert.pem" ]; then
+    echo
+    bold "  '$chosen' already has an identity on this server."
+    echo "  Re-flashing THE SAME unit is fine: it keeps its existing"
+    echo "  certificate, so the server recognises it as the unit it knows."
+    echo
+    echo "  It is NOT fine if a different board is still deployed under this"
+    echo "  name. The server keeps whichever certificate it saw first and"
+    echo "  refuses the other, so one of the two would go silent."
+    echo
+    ask reuse "  Re-flash '$chosen' with its existing identity? [y/N]: "
+    case "$reuse" in
+      y|Y|yes|YES) green "  keeping $chosen's existing identity" ;;
+      *) red "  skipped."; continue ;;
+    esac
+  fi
+
+  CHOSEN="$CHOSEN $chosen"
+done
+[ -n "${CHOSEN// /}" ] || { red "No unit names given."; exit 1; }
+
+mkdir -p "$WORK_ROOT"
+LOG="$WORK_ROOT/detail.log"
+: >"$LOG"
+
+echo
+line
+bold "  Making:$CHOSEN"
+line
+echo "Technical detail: $LOG"
+echo
+
+DONE_UNITS=""; FAILED_UNITS=""; INDEX=0
+TOTAL=$(echo $CHOSEN | wc -w)
+EXPECT_VERIFIED=0
+
+for unit in $CHOSEN; do
+  INDEX=$((INDEX + 1))
+  echo; line
+  bold "  Unit $INDEX of $TOTAL:  $unit"
+  line
+
+  echo "Building its firmware (about a minute)..."
+  build_unit "$unit" "$WIFI_SSID" "$WIFI_PASS"
+  case "$?" in
+    0) green "  Firmware ready." ;;
+    2) red "  Could not create its certificate. See $LOG"; FAILED_UNITS="$FAILED_UNITS $unit"; continue ;;
+    3) red "  Firmware did not compile. See $LOG";        FAILED_UNITS="$FAILED_UNITS $unit"; continue ;;
+    *) red "  Build failed. See $LOG";                    FAILED_UNITS="$FAILED_UNITS $unit"; continue ;;
+  esac
+
+  echo
+  bold "  >>> Plug in the board that will become $unit."
+  echo "  Only ONE board at a time."
+  pause_for_enter "  Press Enter once it is plugged in. "
+
+  flashed=0
+  for attempt in 1 2 3 4; do
+    echo "  Looking for an ESP32-S3 (attempt $attempt/4)..."
+    if ! port=$(wait_for_board); then
+      red "  No ESP32-S3 detected after ${PORT_WAIT_S}s."
+    elif flash_unit "$unit" "$port"; then
+      flashed=1
+      break
+    else
+      red "  Flash attempt $attempt failed."
+    fi
+    # A first failure is EXPECTED, not operator error: flashing resets the
+    # board, the USB port re-enumerates under a new name, and the retry
+    # simply finds it again. Asking a person to unplug and press Enter for
+    # that made a normal, self-healing step look like a fault - and it
+    # happened on every single unit.
+    if [ "$attempt" -lt 3 ]; then
+      echo "  The board re-appeared under a different port. Retrying by itself..."
+      sleep 3
+    elif [ "$attempt" -eq 3 ]; then
+      echo "  Still no luck. Put the board into flashing mode by hand:"
+      echo "    1. hold down BOOT"
+      echo "    2. press RESET once and let go of RESET"
+      echo "    3. let go of BOOT"
+      echo "  The cable stays plugged in the whole time."
+      pause_for_enter "  Press Enter to try once more. "
+    fi
+  done
+
+  if [ "$flashed" -eq 1 ]; then
+    if register_unit "$unit"; then
+      green "  $unit is flashed and verified."
+      DONE_UNITS="$DONE_UNITS $unit"
+    else
+      red "  $unit flashed, but the server roster update failed. See $LOG"
+      FAILED_UNITS="$FAILED_UNITS $unit"
+    fi
+    echo; bold "  >>> You can unplug $unit now."
+    [ "$INDEX" -lt "$TOTAL" ] && pause_for_enter "  Press Enter when unplugged. "
+  else
+    red "  Could not flash $unit after four attempts."
+    FAILED_UNITS="$FAILED_UNITS $unit"
+  fi
+done
+
+echo; line
+bold "  Finished"
+line
+for unit in $DONE_UNITS;   do green "  ready   $unit"; done
+for unit in $FAILED_UNITS; do red   "  FAILED  $unit"; done
+echo
+[ -n "${DONE_UNITS// /}" ] && echo "Each unit joins the server by itself within about a minute."

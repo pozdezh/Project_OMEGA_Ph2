@@ -1,0 +1,4 @@
+﻿>>> REVOKING NMU_18 at 03:29:15 <<<
+>>> server replied: {"id":"NMU_18","revoked":true} <<<
+
+

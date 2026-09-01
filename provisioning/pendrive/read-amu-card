@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+# Read an SD card into an image file, safely and resumably.
+#
+# WHY THIS IS A TOOL AND NOT A dd COMMAND. `dd` will happily overwrite the
+# disk the server boots from if one letter is wrong, and the letter CHANGES
+# every time a reader is replugged. So the card is found by its properties -
+# removable, USB, not the root disk - and never by a letter typed from
+# memory.
+#
+# It also unmounts the card first. Reading a mounted, live filesystem raw is
+# slower, can capture a half-written state, and on 2026-08-25 contributed to
+# a transfer that died 70 MB in and left stale mounts returning I/O errors
+# for everything behind them - which looked exactly like a dying card and
+# was not.
+#
+# Resumable: if the link drops, run it again and it continues from where the
+# image stops rather than starting over.
+#
+#   sudo ./read-amu-card [output.img]
+
+set -u
+TOOL_VERSION="2026-08-25c-owner-home"
+
+# Under sudo, $HOME is root's. An image left in /root is awkward to reach and
+# easy to lose track of, and the tool that consumes it looks in the
+# operator's home - so resolve THAT account rather than the elevated one.
+OWNER_HOME="$HOME"
+if [ -n "${SUDO_USER:-}" ]; then
+  OWNER_HOME="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
+  [ -n "$OWNER_HOME" ] || OWNER_HOME="$HOME"
+fi
+OUT="${1:-$OWNER_HOME/amu-golden.img}"
+BLOCK_MB=4
+
+bold()  { printf '\033[1m%s\033[0m\n' "$*"; }
+green() { printf '\033[1;32m%s\033[0m\n' "$*"; }
+red()   { printf '\033[1;31m%s\033[0m\n' "$*"; }
+die()   { red "$*"; exit 1; }
+
+[ "$(id -u)" = "0" ] || die "must be run with sudo - reading a raw device needs root"
+
+# --------------------------------------------------------- find the card
+
+root_disk() {
+  local src
+  src="$(findmnt -no SOURCE / 2>/dev/null)" || return 1
+  lsblk -no PKNAME "$src" 2>/dev/null | head -1
+}
+
+ROOT_DISK="$(root_disk)"
+# A card in a BUILT-IN slot appears as mmcblkN and is NOT flagged removable,
+# so a removable-only scan misses it entirely. That matters more than it
+# looks: the built-in reader is also the one that works - the USB adapter
+# dropped the link after about eight seconds of sustained reading, twice, on
+# two different ports.
+CANDIDATES=""
+for path in /sys/block/sd* /sys/block/mmcblk*; do
+  [ -e "$path" ] || continue
+  name="$(basename "$path")"
+  [ "$name" = "$ROOT_DISK" ] && continue
+  if [ "$(cat "$path/removable" 2>/dev/null)" != "1" ]; then
+    case "$name" in mmcblk*) ;; *) continue ;; esac
+  fi
+  CANDIDATES="$CANDIDATES $name"
+done
+
+set -- $CANDIDATES
+case $# in
+  0) die "no removable card found. Is the reader plugged in?" ;;
+  1) DEVICE="/dev/$1" ;;
+  *) red "More than one removable device is connected:"
+     for n in "$@"; do lsblk -o NAME,SIZE,MODEL "/dev/$n" | tail -1; done
+     die "unplug all but the card, then run this again" ;;
+esac
+
+# Belt and braces: the checks above should make this impossible, so if it
+# ever fires something is wrong with the assumptions, not the input.
+[ "$(basename "$DEVICE")" = "$ROOT_DISK" ] && die "REFUSED: $DEVICE is the boot disk"
+
+SIZE_BYTES="$(blockdev --getsize64 "$DEVICE")"
+SIZE_H="$(numfmt --to=iec "$SIZE_BYTES" 2>/dev/null || echo "$SIZE_BYTES bytes")"
+
+bold "Card found:"
+lsblk -o NAME,SIZE,TYPE,RM,TRAN,MODEL,MOUNTPOINT "$DEVICE"
+echo
+echo "  reading from : $DEVICE  ($SIZE_H)"
+echo "  writing to   : $OUT"
+echo "  boot disk    : /dev/$ROOT_DISK  (never touched)"
+echo
+
+# ------------------------------------------------------- room to put it
+
+FREE_BYTES="$(df -B1 --output=avail "$(dirname "$OUT")" | tail -1)"
+DONE_BYTES=0
+[ -f "$OUT" ] && DONE_BYTES="$(stat -c %s "$OUT")"
+NEED=$((SIZE_BYTES - DONE_BYTES))
+if [ "$FREE_BYTES" -lt "$NEED" ]; then
+  die "not enough space: need $(numfmt --to=iec $NEED), have $(numfmt --to=iec $FREE_BYTES)"
+fi
+
+# ------------------------------------------------------------- unmount
+
+for part in "$DEVICE"?* "$DEVICE"p*; do
+  [ -b "$part" ] || continue
+  if findmnt -no TARGET "$part" >/dev/null 2>&1; then
+    echo "  unmounting $part"
+    umount "$part" 2>/dev/null || udisksctl unmount -b "$part" >/dev/null 2>&1 || \
+      die "$part is busy. Close any file manager window showing the card, then retry."
+  fi
+done
+green "  card is unmounted - nothing is writing to it while we read"
+echo
+
+# -------------------------------------------------------------- resume
+
+SKIP_BLOCKS=$((DONE_BYTES / (BLOCK_MB * 1024 * 1024)))
+if [ "$SKIP_BLOCKS" -gt 0 ]; then
+  # Restart from a whole-block boundary so a part-written block is redone
+  # rather than trusted.
+  TRUNC=$((SKIP_BLOCKS * BLOCK_MB * 1024 * 1024))
+  truncate -s "$TRUNC" "$OUT"
+  bold "Resuming: $(numfmt --to=iec $TRUNC) of $SIZE_H already copied"
+fi
+
+bold "Copying. This takes a while - the progress line shows the real speed."
+echo "If it stops with an I/O error, just run this command again; it continues."
+echo
+
+dd if="$DEVICE" of="$OUT" bs="${BLOCK_MB}M" \
+   skip="$SKIP_BLOCKS" seek="$SKIP_BLOCKS" \
+   status=progress conv=fsync
+RC=$?
+
+FINAL="$(stat -c %s "$OUT" 2>/dev/null || echo 0)"
+echo
+if [ "$RC" -eq 0 ] && [ "$FINAL" -ge "$SIZE_BYTES" ]; then
+  green "Done. Full image at $OUT ($(numfmt --to=iec $FINAL))"
+  echo "You can put the card back in the AMU now."
+else
+  red "Stopped at $(numfmt --to=iec $FINAL) of $SIZE_H."
+  echo "Run the same command again to continue from here."
+  echo "If it stops at the SAME place twice, the card has a bad spot there"
+  echo "and imaging is the wrong approach - build the new unit from stock"
+  echo "Raspberry Pi OS plus install_amu.sh instead."
+  exit 1
+fi

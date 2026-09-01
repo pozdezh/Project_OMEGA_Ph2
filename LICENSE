@@ -1,0 +1,41 @@
+MIT License
+
+Copyright (c) 2025-2026 Constantin Shoot
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------------------
+Note on third-party assets
+
+The MIT License above covers this project's own source, firmware,
+documentation, and configuration.
+
+The air-quality unit (AMU) enclosure is a derivative work and is NOT covered
+by the MIT License:
+
+    This model is based on "Raspberry Pi 4B Case" (1937761) by AlfaChris,
+    originally published on Cults3D. Used here with explicit permission from
+    the author for inclusion in this project. Original license does not
+    apply; redistribution outside this context requires the author's
+    approval.
+
+    https://cults3d.com/:1937761
+
+This carries forward the same permission granted for Phase 1
+(github.com/pozdezh/Project_DELTA_Ph1).

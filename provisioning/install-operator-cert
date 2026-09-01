@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# Give this machine's Firefox the operator pass, so the dashboard opens.
+#
+#   ./install-operator-cert            (all Firefox profiles found)
+#   ./install-operator-cert <p12> <password>
+#
+# ---------------------------------------------------------------------------
+# WHAT PROBLEM THIS SOLVES
+#
+# The dashboard is behind nginx with ssl_verify_client on: the browser must
+# prove WHO IT IS before Flask is ever reached, the same mutual-authentication
+# rule the devices follow. A browser without the pass gets
+#
+#     400 Bad Request - No required SSL certificate was sent
+#
+# which reads like a fault and is in fact the gate doing its job. ("SSL" is
+# nginx's historical spelling; the protocol is TLS.)
+#
+# Firefox does NOT use the system certificate store. It keeps its own, per
+# profile, so the pass has to be imported into each profile that will open the
+# dashboard - which is why this is a script and not a line in a manual.
+# ---------------------------------------------------------------------------
+
+set -u
+TOOL_VERSION="2026-08-25a"
+
+bold()  { printf '\033[1m%s\033[0m\n' "$*"; }
+green() { printf '\033[1;32m%s\033[0m\n' "$*"; }
+red()   { printf '\033[1;31m%s\033[0m\n' "$*"; }
+die()   { red "$*"; exit 1; }
+
+OMEGA="${OMEGA_HOME:-$HOME/omega_brick4}"
+P12="${1:-$OMEGA/operator/operator.p12}"
+P12_PASS="${2:-${OMEGA_P12_PASSWORD:-omega}}"
+
+[ -f "$P12" ] || die "operator pass not found at $P12 - run install_hub.sh --only operator first"
+
+# ------------------------------------------------------------ dependencies
+
+if ! command -v pk12util >/dev/null 2>&1; then
+  bold "Installing libnss3-tools (needed to write Firefox's certificate store)..."
+  # sudo -n only, previously: it refused rather than ASKING, so an operator
+  # sitting at a terminal was told to go and run the command by hand for no
+  # reason. Ask when there is a terminal to ask on; only give up when there
+  # genuinely is not one.
+  if ! sudo -n true 2>/dev/null; then
+    if [ -t 0 ] || [ -r /dev/tty ]; then
+      echo "  (sudo password needed to install libnss3-tools)"
+    else
+      die "need sudo to install libnss3-tools - run: sudo apt-get install -y libnss3-tools, then this again"
+    fi
+  fi
+  sudo apt-get update -qq || die "apt-get update failed"
+  sudo apt-get install -y libnss3-tools || die "could not install libnss3-tools"
+fi
+
+# ------------------------------------------------------------- find profiles
+
+# A snap Firefox keeps its profiles under ~/snap, not ~/.mozilla. Looking in
+# only one place is how "the certificate is installed" ends up being true of a
+# profile the operator never opens.
+PROFILES=""
+for base in "$HOME/.mozilla/firefox" "$HOME/snap/firefox/common/.mozilla/firefox"; do
+  [ -d "$base" ] || continue
+  for prof in "$base"/*.default* "$base"/*.dev-edition*; do
+    [ -d "$prof" ] || continue
+    PROFILES="$PROFILES $prof"
+  done
+done
+
+[ -n "${PROFILES// /}" ] || die "no Firefox profile found - open Firefox once, then run this again"
+
+# ----------------------------------------------------------------- install
+
+PASSFILE="$(mktemp)"
+trap 'rm -f "$PASSFILE"' EXIT
+printf '%s' "$P12_PASS" > "$PASSFILE"
+chmod 600 "$PASSFILE"
+
+CA_CERT="$(dirname "$P12")/ca-cert.pem"
+INSTALLED=0
+
+for prof in $PROFILES; do
+  bold "Profile: $(basename "$prof")"
+
+  # The CA certificate, so Firefox trusts the server's own identity and stops
+  # warning about it. Without this the padlock is a warning even once the
+  # client pass is accepted.
+  if [ -f "$CA_CERT" ]; then
+    certutil -A -n "Omega CA" -t "CT,C,C" -i "$CA_CERT" -d "sql:$prof" 2>/dev/null \
+      && green "  trusted the Omega CA" \
+      || echo "  (CA already trusted, or could not be added)"
+  fi
+
+  # The operator pass itself. -W reads the password from a file rather than
+  # the command line, where it would be visible to every process on the box.
+  if pk12util -i "$P12" -d "sql:$prof" -w "$PASSFILE" -W "$P12_PASS" >/dev/null 2>&1 \
+     || pk12util -i "$P12" -d "sql:$prof" -W "$P12_PASS" >/dev/null 2>&1; then
+    green "  installed the operator pass"
+    INSTALLED=$((INSTALLED + 1))
+  else
+    red "  could not install the pass into this profile"
+    echo "  If Firefox is running, close it completely and try again - it locks"
+    echo "  its certificate store while open."
+  fi
+done
+
+echo
+if [ "$INSTALLED" -gt 0 ]; then
+  green "Done - the pass is in $INSTALLED profile(s)."
+  echo
+  echo "Open:  https://smartageing.local"
+  echo
+  echo "Firefox will ASK which certificate to present the first time. Choose"
+  echo "'operator'. If it does not ask, the site was cached as failed - press"
+  echo "Ctrl+Shift+R once."
+else
+  die "nothing was installed - is Firefox closed?"
+fi

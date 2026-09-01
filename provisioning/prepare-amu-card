@@ -1,0 +1,355 @@
+#!/usr/bin/env bash
+# Write a unit's software and identity onto a freshly imaged Raspberry Pi
+# card, so the Pi installs itself the first time it is switched on.
+#
+#   sudo ./prepare-amu-card AMU_11            (finds the card by itself)
+#   sudo ./prepare-amu-card AMU_11 /dev/sdc   (or name it explicitly)
+#
+# Safe to re-run on the same card.
+#
+# ---------------------------------------------------------------------------
+# WHY THIS READS THE BOOT PARTITION AND NOT /etc/passwd
+#
+# Current Raspberry Pi Imager does NOT apply its settings when it writes the
+# card. It drops cloud-init files - user-data, network-config, meta-data -
+# onto the boot partition, and the Pi applies them on FIRST BOOT.
+#
+# So on a correctly configured, never-booted card:
+#   /etc/hostname   still says "raspberrypi"
+#   /etc/passwd     still has only the stock "pi"
+#   /home/amu       does not exist yet
+#
+# An earlier version read those three and declared a perfectly good card
+# unconfigured; worse, it copied the unit's software into /home/pi, a home
+# the running unit would never use. The authoritative answer is in user-data
+# on the boot partition, which is what this reads.
+#
+# WHY THE SOFTWARE GOES IN /opt AND NOT A HOME DIRECTORY
+#
+# The account does not exist yet, so there is no home to write into and no
+# uid to own it. The bundle lands in /opt/omega, owned by root, and the
+# first-boot service moves it into the real user's home once cloud-init has
+# created them.
+# ---------------------------------------------------------------------------
+
+set -u
+TOOL_VERSION="2026-08-25f-cron-fallback"
+
+# Under sudo, $HOME is root's, not the operator's - so a default of
+# $HOME/amu_bundles looked in /root and reported the bundle missing when it
+# was sitting in /home/smart.
+OWNER_HOME="$HOME"
+if [ -n "${SUDO_USER:-}" ]; then
+  OWNER_HOME="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
+  [ -n "$OWNER_HOME" ] || OWNER_HOME="$HOME"
+fi
+BUNDLE_DIR="${OMEGA_BUNDLE_OUT:-$OWNER_HOME/amu_bundles}"
+
+MNT_ROOT="/tmp/omega_card_root_$$"
+MNT_BOOT="/tmp/omega_card_boot_$$"
+
+bold()  { printf '\033[1m%s\033[0m\n' "$*"; }
+green() { printf '\033[1;32m%s\033[0m\n' "$*"; }
+red()   { printf '\033[1;31m%s\033[0m\n' "$*"; }
+die()   { red "$*"; exit 1; }
+
+UNIT="${1:-}"
+DEVICE="${2:-}"
+
+[ -n "$UNIT" ] || die "usage: sudo $0 AMU_11 [/dev/sdX]"
+case "$UNIT" in
+  AMU_*) ;;
+  *) die "unit name must start with AMU_ (got: $UNIT)" ;;
+esac
+[ "$(id -u)" = "0" ] || die "must be run with sudo - mounting a card needs root"
+
+SRC="$BUNDLE_DIR/$UNIT"
+[ -d "$SRC" ] || die "no bundle for $UNIT at $SRC - run make-amu-bundle $UNIT first"
+[ -f "$SRC/install_amu.sh" ] || die "$SRC looks incomplete (no install_amu.sh)"
+
+EXPECT_HOST="$(echo "$UNIT" | tr 'A-Z' 'a-z' | tr -d '_')"
+
+# ------------------------------------------------------------- find the card
+
+root_disk() {
+  local src
+  src="$(findmnt -no SOURCE / 2>/dev/null)" || return 1
+  lsblk -no PKNAME "$src" 2>/dev/null | head -1
+}
+ROOT_DISK="$(root_disk)"
+
+if [ -z "$DEVICE" ]; then
+  CANDIDATES=""
+  for path in /sys/block/sd* /sys/block/mmcblk*; do
+    [ -e "$path" ] || continue
+    name="$(basename "$path")"
+    [ "$name" = "$ROOT_DISK" ] && continue
+    if [ "$(cat "$path/removable" 2>/dev/null)" != "1" ]; then
+      case "$name" in mmcblk*) ;; *) continue ;; esac
+    fi
+    CANDIDATES="$CANDIDATES $name"
+  done
+  set -- $CANDIDATES
+  case $# in
+    0) die "no removable card found. Is the reader plugged in?" ;;
+    1) DEVICE="/dev/$1" ;;
+    *) red "More than one removable device is connected:"
+       for n in "$@"; do lsblk -o NAME,SIZE,MODEL "/dev/$n" | tail -1; done
+       die "unplug all but the card, or name the device explicitly" ;;
+  esac
+fi
+
+[ -b "$DEVICE" ] || die "$DEVICE is not a block device"
+[ "$(basename "$DEVICE")" = "$ROOT_DISK" ] && die "REFUSED: $DEVICE is the disk this computer boots from"
+
+case "$DEVICE" in
+  *mmcblk*|*nvme*) BOOT_PART="${DEVICE}p1"; ROOT_PART="${DEVICE}p2" ;;
+  *) BOOT_PART="${DEVICE}1"; ROOT_PART="${DEVICE}2" ;;
+esac
+[ -b "$BOOT_PART" ] || die "$BOOT_PART not found - is this a Raspberry Pi OS card?"
+[ -b "$ROOT_PART" ] || die "$ROOT_PART not found - is this a Raspberry Pi OS card?"
+
+bold "Card found:"
+lsblk -o NAME,SIZE,TYPE,RM,TRAN,MODEL,MOUNTPOINT "$DEVICE"
+echo
+echo "  writing $UNIT onto : $DEVICE"
+echo "  boot disk          : /dev/$ROOT_DISK  (never touched)"
+echo
+
+# --------------------------------------------------------------- mount both
+
+for part in "$BOOT_PART" "$ROOT_PART"; do
+  if findmnt -no TARGET "$part" >/dev/null 2>&1; then
+    umount "$part" 2>/dev/null || udisksctl unmount -b "$part" >/dev/null 2>&1 \
+      || die "$part is busy - close any file manager window showing the card"
+  fi
+done
+
+mkdir -p "$MNT_BOOT" "$MNT_ROOT"
+mount "$BOOT_PART" "$MNT_BOOT" || die "could not mount $BOOT_PART"
+mount "$ROOT_PART" "$MNT_ROOT" || { umount "$MNT_BOOT"; die "could not mount $ROOT_PART"; }
+cleanup() {
+  umount "$MNT_ROOT" 2>/dev/null; umount "$MNT_BOOT" 2>/dev/null
+  rmdir "$MNT_ROOT" "$MNT_BOOT" 2>/dev/null
+}
+trap cleanup EXIT
+
+[ -d "$MNT_ROOT/etc" ] || die "this does not look like a Raspberry Pi OS root filesystem"
+
+# ------------------------------------------- read what the Imager configured
+
+USER_DATA="$MNT_BOOT/user-data"
+if [ ! -f "$USER_DATA" ]; then
+  red "REFUSED: no cloud-init user-data on this card's boot partition."
+  echo
+  echo "  That file is how Raspberry Pi Imager stores the hostname, username,"
+  echo "  WiFi and SSH settings. Without it the Pi boots with no network and"
+  echo "  no way to log in."
+  echo
+  echo "  Write the card again in Raspberry Pi Imager. At the prompt"
+  echo "  'Would you like to apply OS customisation settings?' choose"
+  echo "  EDIT SETTINGS, fill it in, then click YES."
+  echo
+  echo "    hostname : $EXPECT_HOST      username : amu"
+  echo "    wireless : your SSID and password, country ES"
+  echo "    services : enable SSH, password authentication"
+  echo
+  echo "  Nothing was written to this card."
+  exit 1
+fi
+
+CARD_HOST="$(sed -n 's/^hostname:[[:space:]]*//p' "$USER_DATA" | head -1 | tr -d "\"' \t\r")"
+# The username sits under a "user:" block, as an indented "name: amu".
+CARD_USER="$(sed -n '/^user:/,/^[a-z]/p' "$USER_DATA" | sed -n 's/^[[:space:]]\+name:[[:space:]]*//p' | head -1 | tr -d "\"' \t\r")"
+
+[ -n "$CARD_HOST" ] || die "could not read the hostname from user-data"
+[ -n "$CARD_USER" ] || die "could not read the username from user-data"
+
+green "  Imager configured: hostname '$CARD_HOST', user '$CARD_USER'"
+if grep -qi "ssid\|access-points" "$MNT_BOOT/network-config" 2>/dev/null; then
+  green "  WiFi is configured"
+else
+  red "  WARNING: no WiFi found in network-config - the unit may not reach the network"
+fi
+
+if [ "$CARD_HOST" != "$EXPECT_HOST" ]; then
+  red "REFUSED: this card is configured as '$CARD_HOST', but you asked for $UNIT."
+  echo "  $UNIT belongs on a card whose hostname is '$EXPECT_HOST'."
+  echo "  Re-image this card as '$EXPECT_HOST', or run this tool with the unit"
+  echo "  name that matches the card. Nothing was written to this card."
+  exit 1
+fi
+
+# ------------------------------------------------------- write the software
+
+# An earlier version wrote into /home/pi. Remove that so a card prepared
+# before this fix does not carry a stale second copy.
+rm -rf "$MNT_ROOT/home/pi/$UNIT" "$MNT_ROOT/home/pi/omega_firstboot.sh" 2>/dev/null
+
+# ------------------------------------------------- enable the sensor buses
+#
+# A fresh Raspberry Pi OS ships with I2C OFF and the UART given to a serial
+# console. Every sensor this unit reads needs one or the other:
+#
+#   SCD30 (CO2), BME280 (temp/pressure), LTR559 (light)  ->  I2C
+#   PMS5003 (particulates)                               ->  UART
+#
+# Without them the service dies at startup with
+# "FileNotFoundError: /dev/i2c-1" and systemd restarts it forever - seventy
+# times before anyone looked, on the first real unit. This was invisible for
+# months because the development Pi had been configured by hand long ago.
+#
+# Done here rather than by the installer so the very first boot already has
+# them: enabling a bus needs a reboot, and a unit that installs and then has
+# to be rebooted by a person is exactly what this project exists to avoid.
+CONFIG_TXT="$MNT_BOOT/config.txt"
+if [ -f "$CONFIG_TXT" ]; then
+  for setting in "dtparam=i2c_arm=on" "enable_uart=1"; do
+    if grep -qxF "$setting" "$CONFIG_TXT"; then
+      echo "  $setting already set"
+    else
+      printf '\n# Added by prepare-amu-card for the Omega sensor buses\n%s\n' \
+        "$setting" >> "$CONFIG_TXT"
+      green "  enabled $setting"
+    fi
+  done
+else
+  red "  WARNING: no config.txt on the boot partition - sensor buses not enabled"
+fi
+
+# The serial console competes with the particulate sensor for the same UART.
+CMDLINE="$MNT_BOOT/cmdline.txt"
+if [ -f "$CMDLINE" ] && grep -q "console=serial0" "$CMDLINE"; then
+  sed -i 's/console=serial0,[0-9]* //' "$CMDLINE"
+  green "  freed the UART from the serial console"
+fi
+
+STAGE="$MNT_ROOT/opt/omega"
+rm -rf "$STAGE"
+mkdir -p "$STAGE"
+cp -r "$SRC" "$STAGE/$UNIT" || die "could not copy the bundle onto the card"
+chmod 700 "$STAGE/$UNIT/pki" 2>/dev/null
+chmod 600 "$STAGE/$UNIT/pki"/*-key.pem 2>/dev/null
+chmod 600 "$STAGE/$UNIT/config/global.ini" 2>/dev/null
+green "  staged $UNIT's software and identity in /opt/omega/$UNIT"
+
+# --------------------------------------------------- first-boot auto-install
+
+# Runs as ROOT, because at boot the account may not exist yet - cloud-init
+# creates it. It waits for that account, hands the software to it, and then
+# runs the installer AS that user: install_amu.sh refuses to run as root,
+# deliberately, because root would become a second GPIO owner fighting the
+# sensor service.
+RUNNER="$MNT_ROOT/opt/omega/firstboot.sh"
+cat > "$RUNNER" <<RUNNER_EOF
+#!/usr/bin/env bash
+# Written by prepare-amu-card $TOOL_VERSION. Runs once, then disables itself.
+set -u
+UNIT="$UNIT"
+CARD_USER="$CARD_USER"
+LOG="/var/log/omega_firstboot.log"
+exec >>"\$LOG" 2>&1
+echo "=== omega first boot: \$(date) - unit \$UNIT, user \$CARD_USER ==="
+
+# cloud-init creates the account; until it has, there is nowhere to install.
+for wait in \$(seq 1 60); do
+  id "\$CARD_USER" >/dev/null 2>&1 && break
+  echo "waiting for cloud-init to create \$CARD_USER (\$wait/60)"
+  sleep 10
+done
+if ! id "\$CARD_USER" >/dev/null 2>&1; then
+  echo "=== \$CARD_USER never appeared - giving up ==="
+  exit 1
+fi
+
+HOME_DIR="\$(getent passwd "\$CARD_USER" | cut -d: -f6)"
+[ -n "\$HOME_DIR" ] || { echo "no home for \$CARD_USER"; exit 1; }
+mkdir -p "\$HOME_DIR"
+
+# ALWAYS refresh from the staged copy. Skipping when the directory already
+# exists meant a card re-prepared with a fixed installer still ran the old
+# one left behind by an earlier attempt - the update silently did nothing.
+rm -rf "\$HOME_DIR/\$UNIT"
+cp -r "/opt/omega/\$UNIT" "\$HOME_DIR/\$UNIT"
+chown -R "\$CARD_USER:\$CARD_USER" "\$HOME_DIR/\$UNIT"
+chmod 700 "\$HOME_DIR/\$UNIT/pki"
+chmod 600 "\$HOME_DIR/\$UNIT/pki"/*-key.pem
+chmod 600 "\$HOME_DIR/\$UNIT/config/global.ini"
+echo "installed \$UNIT into \$HOME_DIR"
+
+for attempt in 1 2 3 4 5; do
+  echo "--- install attempt \$attempt ---"
+  if runuser -u "\$CARD_USER" -- "\$HOME_DIR/\$UNIT/install_amu.sh"; then
+    echo "=== installed successfully on attempt \$attempt ==="
+    systemctl disable omega-firstboot.service >/dev/null 2>&1 || true
+    rm -f /etc/cron.d/omega-firstboot
+    exit 0
+  fi
+  echo "attempt \$attempt failed - waiting 60s (usually the network is not up yet)"
+  sleep 60
+done
+
+echo "=== gave up after 5 attempts. Log in and run ~/\$UNIT/install_amu.sh by hand ==="
+exit 1
+RUNNER_EOF
+chmod 755 "$RUNNER"
+
+# NO network-online dependency, deliberately. The first version had
+# After=network-online.target with Wants=, and on a real first boot the unit
+# never started at all - enabled, inactive, and not one line in the journal.
+# On Raspberry Pi OS that target is only meaningful when
+# NetworkManager-wait-online is enabled, and a Wants= on a target that never
+# activates takes the unit with it, silently.
+#
+# The script does not need systemd to promise a network: it already waits for
+# the account to exist and retries the install five times a minute apart, so
+# it copes with a network that arrives late. Ordering after cloud-final is
+# kept as a hint - if that unit is absent, systemd simply ignores it.
+cat > "$MNT_ROOT/etc/systemd/system/omega-firstboot.service" <<SERVICE_EOF
+[Unit]
+Description=Omega AMU first-boot install ($UNIT)
+After=cloud-final.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/omega/firstboot.sh
+TimeoutStartSec=2400
+RemainAfterExit=no
+
+[Install]
+WantedBy=multi-user.target
+SERVICE_EOF
+
+mkdir -p "$MNT_ROOT/etc/systemd/system/multi-user.target.wants"
+ln -sf /etc/systemd/system/omega-firstboot.service \
+       "$MNT_ROOT/etc/systemd/system/multi-user.target.wants/omega-firstboot.service"
+
+# A SECOND, independent trigger via cron, because the systemd one did not fire
+# on a real first boot. On 2026-08-25 the unit sat enabled and inactive with
+# NOT ONE journal line across two boots and two different unit definitions -
+# systemd never attempted it, and nothing said why. Rather than keep guessing
+# at the cause, this adds a mechanism that does not share it.
+#
+# The script is safe to run twice: it disables the systemd unit on success and
+# removes this crontab line the same way.
+mkdir -p "$MNT_ROOT/etc/cron.d"
+cat > "$MNT_ROOT/etc/cron.d/omega-firstboot" <<CRON_EOF
+# Written by prepare-amu-card. Removes itself once the unit is installed.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+@reboot root [ -x /opt/omega/firstboot.sh ] && /opt/omega/firstboot.sh
+CRON_EOF
+chmod 644 "$MNT_ROOT/etc/cron.d/omega-firstboot"
+green "  first-boot installer armed (systemd + cron, either will do)"
+
+echo
+green "$UNIT is ready. Eject the card, put it in the Pi, and power it on."
+echo
+echo "First boot takes a few minutes: cloud-init sets the hostname, creates"
+echo "$CARD_USER and joins the WiFi, then our installer runs."
+echo
+echo "Watch it arrive on the dashboard, or look directly:"
+echo "    ssh $CARD_USER@$EXPECT_HOST.local 'sudo cat /var/log/omega_firstboot.log'"
+echo
+echo "If it did not install, the software is already on the unit - log in and"
+echo "run  ~/$UNIT/install_amu.sh  by hand."

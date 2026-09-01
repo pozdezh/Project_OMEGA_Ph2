@@ -1,0 +1,193 @@
+# Manufacture NMU units: per-unit certificate, firmware build, flash, verify.
+#
+# Run on the DEV PC (the one with WSL + arduino-cli + the omega-server SSH
+# alias). Produces, for each unit, a ready-to-flash firmware set in
+# provisioning/dist/nmu/firmware/<UNIT>/ so that a FRESH PC with no toolchain
+# can reflash that same unit later using dist/nmu/FLASH_NMU.bat.
+#
+# nmu/ and deploy/esp32/ are never modified - every unit is built in its own
+# scratch copy, so the reference firmware behind this project's measured
+# evidence cannot be disturbed by a provisioning run.
+#
+#   powershell -ExecutionPolicy Bypass -File make_nmu.ps1
+
+$ErrorActionPreference = "Stop"
+$PROV       = $PSScriptRoot
+$ROOT       = Split-Path -Parent $PROV
+$SRC        = Join-Path $ROOT "nmu"
+$DIST       = Join-Path $PROV "dist\nmu"
+$FIRMWARE   = Join-Path $DIST "firmware"
+$BUILD_ROOT = Join-Path $env:TEMP "omega_nmu_build"
+$SKETCH     = "stage3_beta_2_dtls"
+
+$SERVER      = "omega-server"
+$PKI_REMOTE  = "/home/smart/omega_brick4/pki_provisioning"
+$PKI_SCRIPT  = "/home/smart/omega_brick4/omega_pki.py"
+$PY_REMOTE   = "/home/smart/omega_spike13/venv/bin/python"
+
+$FQBN      = "esp32:esp32:adafruit_feather_esp32s3_nopsram:CDCOnBoot=cdc"
+$ESPTOOL   = "$env:LOCALAPPDATA\Arduino15\packages\esp32\tools\esptool_py\5.3.1\esptool.exe"
+$BOOT_APP0 = "$env:LOCALAPPDATA\Arduino15\packages\esp32\hardware\esp32\3.3.11\tools\partitions\boot_app0.bin"
+$SERVER_PORT = 11400
+
+function Find-EspPort([string]$vid) {
+    foreach ($d in Get-CimInstance Win32_PnPEntity) {
+        if ($d.PNPDeviceID -match $vid -and $d.Name -match '\((COM\d+)\)') { return $Matches[1] }
+    }
+    return $null
+}
+
+function Wait-EspPort([string]$vid, [int]$seconds) {
+    for ($i = 0; $i -lt $seconds; $i++) {
+        $p = Find-EspPort $vid
+        if ($p) { return $p }
+        Start-Sleep -Seconds 1
+    }
+    return $null
+}
+
+Write-Host ""
+Write-Host "================================================="
+Write-Host "  Omega NMU manufacturing"
+Write-Host "================================================="
+
+foreach ($tool in @($ESPTOOL, $BOOT_APP0)) {
+    if (-not (Test-Path $tool)) { Write-Host "MISSING: $tool" -ForegroundColor Red; exit 1 }
+}
+
+$WifiSsid = Read-Host "WiFi SSID"
+$WifiPass = Read-Host "WiFi password"
+Write-Host ""
+Write-Host "Unit names, one per line (e.g. NMU_04). Blank line when done."
+$units = @()
+while ($true) {
+    $n = (Read-Host "  unit").Trim()
+    if ([string]::IsNullOrWhiteSpace($n)) { break }
+    $units += $n
+}
+if ($units.Count -eq 0) { Write-Host "Nothing to do."; exit 0 }
+
+$flashNow = (Read-Host "Flash each unit as it is built? (y/n)").Trim().ToLower() -eq "y"
+$results = [ordered]@{}
+
+New-Item -ItemType Directory -Force -Path $FIRMWARE | Out-Null
+
+foreach ($unit in $units) {
+    Write-Host ""
+    Write-Host "--- $unit ---------------------------------------"
+    $results[$unit] = "not built"
+
+    $unitRoot  = Join-Path $BUILD_ROOT $unit
+    $sketchDir = Join-Path $unitRoot $SKETCH      # folder name MUST equal sketch name
+    if (Test-Path $unitRoot) { Remove-Item -Recurse -Force $unitRoot }
+    New-Item -ItemType Directory -Force -Path $sketchDir | Out-Null
+    Copy-Item (Join-Path $SRC "*") $sketchDir -Recurse
+
+    Write-Host "[1/4] certificate"
+    ssh $SERVER "$PY_REMOTE $PKI_SCRIPT device $PKI_REMOTE $unit" 2>&1 | ForEach-Object { Write-Host "      $_" }
+    $remoteHeader = "/tmp/omega_certs_$unit.h"
+    ssh $SERVER "$PY_REMOTE $PKI_SCRIPT arduino $PKI_REMOTE $unit $remoteHeader" 2>&1 | ForEach-Object { Write-Host "      $_" }
+    scp -q "${SERVER}:$remoteHeader" (Join-Path $sketchDir "omega_certs.h")
+    if (-not (Test-Path (Join-Path $sketchDir "omega_certs.h"))) {
+        Write-Host "      FAILED to fetch certificate" -ForegroundColor Red
+        $results[$unit] = "no certificate"; continue
+    }
+    ssh $SERVER "rm -f $remoteHeader" 2>&1 | Out-Null
+
+    Write-Host "[2/4] config.h"
+    @"
+#ifndef CONFIG_H
+#define CONFIG_H
+#define OMEGA_WIFI_SSID   "$WifiSsid"
+#define OMEGA_WIFI_PASS   "$WifiPass"
+#define OMEGA_SERVER_IP   ""
+#define OMEGA_SERVER_PORT $SERVER_PORT
+#define OMEGA_HANDSHAKE_TIMEOUT_MS 8000
+#define OMEGA_ACK_TIMEOUT_MS       3000
+#endif
+"@ | Set-Content -Path (Join-Path $sketchDir "config.h") -Encoding utf8
+
+    Write-Host "[3/4] compiling"
+    $wslSketch = (wsl wslpath -a ($sketchDir -replace '\\', '/')).Trim()
+    $out = wsl -e bash -c "export PATH=`$HOME/bin:`$PATH && arduino-cli compile --fqbn $FQBN --output-dir $wslSketch/build $wslSketch 2>&1"
+    $out | Select-Object -Last 3 | ForEach-Object { Write-Host "      $_" }
+    $binPath = Join-Path $sketchDir "build\$SKETCH.ino.bin"
+    if (-not (Test-Path $binPath)) {
+        Write-Host "      COMPILE FAILED" -ForegroundColor Red
+        $results[$unit] = "compile failed"; continue
+    }
+
+    $unitFw = Join-Path $FIRMWARE $unit
+    New-Item -ItemType Directory -Force -Path $unitFw | Out-Null
+    Copy-Item (Join-Path $sketchDir "build\$SKETCH.ino.bin")            $unitFw -Force
+    Copy-Item (Join-Path $sketchDir "build\$SKETCH.ino.bootloader.bin") $unitFw -Force
+    Copy-Item (Join-Path $sketchDir "build\$SKETCH.ino.partitions.bin") $unitFw -Force
+    Copy-Item $BOOT_APP0 $unitFw -Force
+    $results[$unit] = "firmware built"
+    Write-Host "      firmware -> $unitFw"
+
+    if (-not $flashNow) { continue }
+
+    Write-Host "[4/4] flashing"
+    Write-Host ""
+    Write-Host "      >>> Plug in $unit via USB now (unplug any other ESP32)."
+    Read-Host  "      press Enter when connected"
+
+    $port = Wait-EspPort 'VID_303A|VID_239A' 20
+    if (-not $port) { Write-Host "      no board detected" -ForegroundColor Red; $results[$unit] = "built, not flashed"; continue }
+    Write-Host "      board on $port"
+
+    $hashes = 0
+    foreach ($attempt in 1, 2) {
+        $port = Find-EspPort 'VID_303A|VID_239A'
+        if (-not $port) { Start-Sleep -Seconds 2; continue }
+        $flashOut = & $ESPTOOL --chip esp32s3 --port $port --baud 460800 --before default-reset --after watchdog-reset `
+            write-flash -z `
+            0x0     (Join-Path $unitFw "$SKETCH.ino.bootloader.bin") `
+            0x8000  (Join-Path $unitFw "$SKETCH.ino.partitions.bin") `
+            0xe000  (Join-Path $unitFw "boot_app0.bin") `
+            0x20000 (Join-Path $unitFw "$SKETCH.ino.bin") 2>&1
+        $hashes = ($flashOut | Select-String "Hash of data verified").Count
+        if ($hashes -ge 4) { break }
+        Write-Host "      attempt $attempt incomplete ($hashes/4 verified), retrying" -ForegroundColor Yellow
+        Start-Sleep -Seconds 3
+    }
+    if ($hashes -lt 4) { Write-Host "      FLASH FAILED" -ForegroundColor Red; $results[$unit] = "flash failed"; continue }
+    Write-Host "      flashed, 4/4 regions verified"
+
+    Write-Host "      verifying over serial (up to 90s for boot jitter + handshake)"
+    Start-Sleep -Seconds 3
+    $appPort = Wait-EspPort 'VID_239A' 20
+    if (-not $appPort) { $results[$unit] = "flashed, serial not found"; continue }
+    try {
+        $sp = New-Object System.IO.Ports.SerialPort($appPort, 115200)
+        $sp.ReadTimeout = 2000
+        $sp.Open(); $sp.DtrEnable = $true
+        $sawId = $false; $sawAck = $false
+        $deadline = (Get-Date).AddSeconds(90)
+        while ((Get-Date) -lt $deadline -and -not $sawAck) {
+            try {
+                $line = $sp.ReadLine()
+                if ($line -match "id=$unit|DTLS: session|ACK OK|BOOT:") { Write-Host "      | $($line.Trim())" }
+                if ($line -match "id=$unit") { $sawId = $true }
+                if ($line -match "ACK OK")   { $sawAck = $true }
+            } catch {}
+        }
+        $sp.Close()
+        if ($sawAck) { $results[$unit] = "CONFIRMED - reporting to server" }
+        elseif ($sawId) { $results[$unit] = "flashed, identity OK, no ACK yet" }
+        else { $results[$unit] = "flashed, no serial output seen" }
+    } catch {
+        $results[$unit] = "flashed, could not read serial"
+    }
+    Write-Host ""
+    Write-Host "      >>> $unit done - you may unplug it."
+}
+
+Write-Host ""
+Write-Host "================================================="
+Write-Host "  Summary"
+Write-Host "================================================="
+foreach ($k in $results.Keys) { Write-Host ("  {0,-12} {1}" -f $k, $results[$k]) }
+Write-Host ""
+Write-Host "Portable flash package: $DIST"

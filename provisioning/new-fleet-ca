@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Create a BRAND NEW certificate authority, and with it a brand new fleet.
+#
+#   ./new-fleet-ca                    (writes into the usual place)
+#   ./new-fleet-ca /path/to/dir
+#
+# ---------------------------------------------------------------------------
+# READ THIS BEFORE RUNNING IT
+#
+# A certificate authority is the thing every unit is built to trust. Replacing
+# it does not "refresh" anything - it starts a different fleet that happens to
+# live on the same shelf. Every existing AMU and NMU will be refused by the
+# new server, and there is no setting that changes that: their certificates
+# are signed by an authority the server has never heard of.
+#
+# Recovering an existing fleet is NOT this script. That is: put the old
+# ca-key.pem and ca-cert.pem back and run setup-server, which adopts them.
+#
+# Legitimate reasons to be here:
+#   * first installation ever, with no units yet built
+#   * the private half leaked, so every certificate it signed must be retired
+#   * a deliberate fresh start for a demonstration or a second site
+#
+# After running this, every unit must be rebuilt:
+#   sudo omega-make-units          for each NMU
+#   sudo omega-prepare-amu-card    for each AMU
+# ---------------------------------------------------------------------------
+
+set -u
+OMEGA="${OMEGA_HOME:-$HOME/omega_brick4}"
+OUT="${1:-$OMEGA/pki_provisioning}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+red()   { printf '\033[1;31m%s\033[0m\n' "$*"; }
+green() { printf '\033[1;32m%s\033[0m\n' "$*"; }
+die()   { red "$*"; exit 1; }
+
+[ -f "$HERE/omega_pki.py" ] || die "omega_pki.py is not beside this script"
+
+red "This creates a NEW authority in: $OUT"
+if [ -f "$OUT/ca-key.pem" ]; then
+  red "An authority ALREADY EXISTS there. Continuing retires every certificate"
+  red "it ever signed - every unit currently deployed stops being accepted."
+  echo
+  echo "If a unit anywhere is still in service, the answer is almost certainly no."
+fi
+echo
+printf 'Type NEW FLEET to continue: '
+read -r answer
+[ "$answer" = "NEW FLEET" ] || die "nothing was changed"
+
+mkdir -p "$OUT"
+chmod 700 "$OUT"
+
+# Back up rather than overwrite. A CA private key deleted by a tool is a fleet
+# that cannot be recovered even by someone who changes their mind ten seconds
+# later, and the cost of keeping it is one file.
+if [ -f "$OUT/ca-key.pem" ]; then
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$OUT/retired-$stamp"
+  mv "$OUT"/ca-key.pem "$OUT"/ca-cert.pem "$OUT/retired-$stamp/" 2>/dev/null
+  green "previous authority moved to $OUT/retired-$stamp (not deleted)"
+fi
+
+python3 "$HERE/omega_pki.py" init "$OUT" --force-new-ca || die "could not create the authority"
+chmod 600 "$OUT/ca-key.pem" 2>/dev/null
+
+echo
+green "New authority created, with the server and operator certificates from it."
+echo
+echo "Now, in order:"
+echo "  1. Copy ca-key.pem and ca-cert.pem somewhere safe and OFFLINE."
+echo "     They are the only way to rebuild this server if it is lost."
+echo "  2. Restart the server so it uses its new certificate:"
+echo "       sudo systemctl restart omega-listener omega-web"
+echo "  3. Rebuild every unit - none of the old ones will be accepted:"
+echo "       sudo omega-make-units          (NMU)"
+echo "       sudo omega-prepare-amu-card    (AMU)"

@@ -1,0 +1,217 @@
+#!/usr/bin/env bash
+# Build a ready-to-copy install bundle for one or more AMU units.
+#
+# WHAT THIS REPLACES. Cloning the working AMU's SD card, which copies its
+# PRIVATE KEY along with everything else and produces units that all claim to
+# be the same device. It was also defeated in practice by a card reader that
+# drops the USB link after about eight seconds of sustained reading.
+#
+# WHAT IT DOES INSTEAD. Each unit gets its OWN key pair and certificate,
+# issued here on the server, and a config already filled in for that unit.
+# Nothing is edited on the Pi and no identity is ever shared. This is the
+# same trust model as the NMU factory: the server signs, the tool installs.
+#
+#   ./make-amu-bundle AMU_11 AMU_12 AMU_13
+#
+# Produces one tarball per unit and prints the two commands to run for each.
+# Safe to re-run: a unit that already has a certificate keeps it.
+
+set -u
+TOOL_VERSION="2026-08-25a"
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUNDLE_SRC="$(cd "$HERE/.." && pwd)"
+
+OMEGA="${OMEGA_HOME:-$HOME/omega_brick4}"
+PKI_DIR="${OMEGA_PKI_DIR:-$OMEGA/pki_provisioning}"
+PKI_TOOL="${OMEGA_PKI_TOOL:-$OMEGA/omega_pki.py}"
+PYTHON="${OMEGA_PYTHON:-python3}"
+OUT_DIR="${OMEGA_BUNDLE_OUT:-$HOME/amu_bundles}"
+# Must match the listener. The example template carried brick1's dead 5000
+# until 2026-08-25; a unit only falls back to this when discovery fails, so
+# a wrong value here stays invisible until the exact moment it matters.
+SERVER_PORT=11400
+
+bold()  { printf '\033[1m%s\033[0m\n' "$*"; }
+green() { printf '\033[1;32m%s\033[0m\n' "$*"; }
+red()   { printf '\033[1;31m%s\033[0m\n' "$*"; }
+die()   { red "$*"; exit 1; }
+
+HAVE_TTY=0
+{ [ -r /dev/tty ] && exec 3</dev/tty && HAVE_TTY=1; } 2>/dev/null || true
+
+ask() {
+  local __var="$1" __prompt="$2" __silent="${3:-}" __value=""
+  if [ "$HAVE_TTY" = "1" ]; then
+    if [ -n "$__silent" ]; then read -r -s -p "$__prompt" __value <&3; echo
+    else read -r -p "$__prompt" __value <&3; fi
+  else
+    if [ -n "$__silent" ]; then read -r -s -p "$__prompt" __value || true; echo
+    else read -r -p "$__prompt" __value || true; fi
+  fi
+  printf -v "$__var" '%s' "$__value"
+}
+
+[ $# -ge 1 ] || die "usage: $0 AMU_11 [AMU_12 ...]"
+
+for unit in "$@"; do
+  case "$unit" in
+    AMU_*) ;;
+    *) die "unit names must start with AMU_ (got: $unit)" ;;
+  esac
+done
+
+# ---------------------------------------------------------------- preflight
+
+bold "Checking this computer..."
+[ -f "$PKI_TOOL" ] || die "  omega_pki.py not found at $PKI_TOOL"
+[ -f "$PKI_DIR/ca-key.pem" ] || die "  CA key not found in $PKI_DIR"
+[ -f "$PKI_DIR/ca-cert.pem" ] || die "  CA certificate not found in $PKI_DIR"
+[ -d "$BUNDLE_SRC/deploy/amu/payload" ] || die "  AMU payload not found in the bundle"
+[ -f "$BUNDLE_SRC/deploy/amu/install_amu.sh" ] || die "  install_amu.sh not found in the bundle"
+green "  All good."
+echo
+
+# The server's own address, used ONLY as a last-resort fallback. Discovery
+# (cached address, then mDNS, then a broadcast probe) is tried first and
+# almost always answers; this is what keeps a unit working at a site where
+# multicast is blocked.
+SERVER_IP="$(python3 - <<'PY'
+import socket
+probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+try:
+    probe.connect(("8.8.8.8", 80))
+    print(probe.getsockname()[0])
+except OSError:
+    print("")
+finally:
+    probe.close()
+PY
+)"
+
+bold "These units will need the site WLAN to reach the server."
+ask WIFI_SSID "  WiFi network name (SSID): "
+ask WIFI_PASS "  WiFi password: " silent
+echo
+[ -n "$WIFI_SSID" ] || die "  an SSID is required"
+
+mkdir -p "$OUT_DIR"
+BUILT=""
+FAILED=""
+
+for unit in "$@"; do
+  echo
+  bold "=== $unit ==="
+
+  # A certificate that already exists is REUSED, never reissued. Issuing a
+  # second one for a name the server already knows produces a unit the
+  # server refuses, because its identity guard remembers the first.
+  if [ -f "$PKI_DIR/$unit-cert.pem" ]; then
+    echo "  reusing $unit's existing identity"
+  else
+    if ! "$PYTHON" "$PKI_TOOL" device "$PKI_DIR" "$unit" >/dev/null 2>&1; then
+      red "  could not issue a certificate for $unit"
+      FAILED="$FAILED $unit"
+      continue
+    fi
+    echo "  issued a new identity for $unit"
+  fi
+
+  work="$OUT_DIR/$unit"
+  rm -rf "$work"
+  mkdir -p "$work/pki" "$work/config"
+
+  cp "$BUNDLE_SRC/deploy/amu/install_amu.sh" "$work/"
+  cp -r "$BUNDLE_SRC/deploy/amu/payload" "$work/payload"
+  for extra in build_live_py.sh install_live_service.sh; do
+    [ -f "$BUNDLE_SRC/deploy/amu/$extra" ] && cp "$BUNDLE_SRC/deploy/amu/$extra" "$work/"
+  done
+  chmod +x "$work"/*.sh 2>/dev/null
+
+  # Prebuilt wheels, if any have been harvested from a unit already built.
+  #
+  # wolfSSL has no published wheel for this Pi's Python, so pip compiles the
+  # C library from source - several minutes per unit, six times over, for a
+  # result that is identical on identical hardware. Building it once and
+  # carrying the wheel turns that into seconds. If the directory is empty the
+  # installer simply builds from source as before.
+  if ls "$OUT_DIR"/*.whl >/dev/null 2>&1; then
+    mkdir -p "$work/wheels"
+    cp "$OUT_DIR"/*.whl "$work/wheels/"
+    echo "  included $(ls "$OUT_DIR"/*.whl | wc -l) prebuilt wheel(s)"
+  fi
+
+  cp "$PKI_DIR/ca-cert.pem" "$work/pki/"
+  cp "$PKI_DIR/$unit-cert.pem" "$work/pki/"
+  cp "$PKI_DIR/$unit-key.pem" "$work/pki/"
+  chmod 600 "$work/pki/$unit-key.pem"
+
+  # The config is written from the example so every key the code reads stays
+  # present, with only the per-unit values substituted. Writing it from
+  # scratch here would silently drop a threshold the day someone adds one.
+  "$PYTHON" - "$BUNDLE_SRC/deploy/amu/payload/config/global.ini.example" \
+               "$work/config/global.ini" "$unit" "$WIFI_SSID" "$WIFI_PASS" \
+               "$SERVER_IP" "$SERVER_PORT" <<'PY'
+import sys
+
+source, target, unit, ssid, password, server_ip, server_port = sys.argv[1:8]
+replacements = {
+    "device_id": unit,
+    "wifi_ssid": ssid,
+    "wifi_pass": password,
+    "server_host": server_ip,
+    "target_port": server_port,
+}
+out = []
+for line in open(source, encoding="utf-8"):
+    stripped = line.lstrip()
+    key = stripped.split("=", 1)[0].strip() if "=" in stripped else ""
+    if key in replacements and not stripped.startswith((";", "#")):
+        indent = line[:len(line) - len(stripped)]
+        out.append("%s%s = %s\n" % (indent, key, replacements.pop(key)))
+    else:
+        out.append(line)
+missing = ", ".join(sorted(replacements))
+if missing:
+    sys.stderr.write("keys not found in the example config: %s\n" % missing)
+    sys.exit(1)
+with open(target, "w", encoding="utf-8", newline="\n") as handle:
+    handle.writelines(out)
+PY
+  if [ $? -ne 0 ]; then
+    red "  could not write the config for $unit"
+    FAILED="$FAILED $unit"
+    continue
+  fi
+  chmod 600 "$work/config/global.ini"
+
+  tarball="$OUT_DIR/$unit.tar.gz"
+  rm -f "$tarball"
+  tar -czf "$tarball" -C "$OUT_DIR" "$unit" || { red "  could not pack $unit"; FAILED="$FAILED $unit"; continue; }
+  green "  $unit ready: $tarball"
+  BUILT="$BUILT $unit"
+done
+
+echo
+bold "=================================================="
+[ -n "$BUILT" ] && green "  ready:$BUILT"
+[ -n "$FAILED" ] && red   "  failed:$FAILED"
+bold "=================================================="
+echo
+echo "THESE TARBALLS CONTAIN PRIVATE KEYS. One unit's key must never reach"
+echo "another unit, and none of them belong in git or on a shared drive."
+echo
+echo "For each unit, from THIS computer:"
+for unit in $BUILT; do
+  # AMU_11 -> amu11, matching the existing amu10. The underscore is DROPPED,
+  # not turned into a hyphen: the hostname has to match what was typed into
+  # Raspberry Pi Imager, and "amu-11" would silently fail to resolve.
+  host="$(echo "$unit" | tr 'A-Z' 'a-z' | tr -d '_')"
+  echo
+  bold "  $unit  (Pi hostname: $host)"
+  echo "    scp $OUT_DIR/$unit.tar.gz amu@$host.local:~/"
+  echo "    ssh amu@$host.local 'tar -xzf $unit.tar.gz && ./$unit/install_amu.sh'"
+done
+echo
+echo "The unit joins the server by itself about a minute after the installer"
+echo "finishes. Nothing on the Pi needs editing."

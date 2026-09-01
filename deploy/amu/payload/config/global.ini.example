@@ -1,0 +1,37 @@
+; Brick 3 AMU configuration. Copy to global.ini and fill in for this unit.
+; global.ini is git-ignored (holds site WLAN credentials); only this .example
+; is committed. Certificates live in ../pki (installed by the provisioning step),
+; never in this file.
+
+[NETWORK]
+device_id = AMU_01
+wifi_ssid = YOUR_WLAN_SSID
+wifi_pass = YOUR_WLAN_PASSWORD
+; Fixed server address for the DTLS session (the residence has one server).
+server_host = 192.168.0.112
+target_port = 11400
+; Port the AMU listens on for direct live MCP queries (mains-powered AMU only).
+live_port = 5001
+
+[SECURITY]
+; Directory holding ca-cert.pem, <device_id>-cert.pem and <device_id>-key.pem.
+pki_dir = /home/omega/omega_amu/pki
+
+[PATHS]
+buffer_file = /home/omega/omega_amu/offline_buffer.json
+
+[TRIGGER_THRESHOLDS]
+alarm_heartbeat_interval = 1800
+co2_critical_high = 1400
+pm_critical_high = 55
+temp_critical_high = 30
+temp_critical_low = 12
+hum_critical_high = 70
+hum_critical_low = 25
+lux_critical_high = 800
+lux_critical_low = 5
+co2_delta = 150
+pm_delta = 15
+temp_step = 1.5
+hum_step = 5
+lux_step = 100

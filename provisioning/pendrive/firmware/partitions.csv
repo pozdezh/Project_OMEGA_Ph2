@@ -1,0 +1,42 @@
+# Omega NMU partition table - ESP32-S3, 8 MB flash.
+#
+# WHY THIS EXISTS
+#
+# The Arduino default for this board uses a single ~2 MB application slot and
+# leaves most of the 8 MB unused. Two problems with that:
+#
+#   1. NO ROOM FOR OVER-THE-AIR UPDATES. Updating firmware over WiFi needs TWO
+#      application slots: the unit runs from one while the new image is written
+#      into the other, then it switches over on the next reboot. If the write
+#      fails or the new image will not boot, the old one is still intact. With
+#      one slot there is no safe way to update remotely - every unit must be
+#      physically opened and cabled.
+#
+#   2. THE LAYOUT CANNOT BE CHANGED LATER WITHOUT A PHYSICAL REFLASH OF EVERY
+#      UNIT. Repartitioning erases the flash. So the OTA slots have to be
+#      reserved NOW, before units are installed in residences, even though OTA
+#      itself is scheduled later. Reserving space costs nothing today; not
+#      reserving it costs a site visit per unit.
+#
+# LAYOUT (8 MB = 0x800000)
+#
+#   nvs       20 KB   device identity, cached server address, counters. Survives
+#                     reboot AND reflash - this is where per-unit identity will
+#                     move so one firmware image can serve the whole fleet.
+#   otadata    8 KB   which of the two app slots to boot from.
+#   phy_init   4 KB   radio calibration data.
+#   app0    3072 KB   running firmware. Current build is ~1.2 MB, so ~60% headroom.
+#   app1    3072 KB   OTA staging slot, same size as app0 (required).
+#   spiffs  1856 KB   small filesystem: offline event buffer mirrored here so a
+#                     power cut cannot lose the backlog, plus logs.
+#   coredump  64 KB   crash dumps, so a field panic can be read back instead of
+#                     guessed at.
+#
+# Name,     Type, SubType,  Offset,   Size
+nvs,        data, nvs,      0x9000,   0x5000
+otadata,    data, ota,      0xe000,   0x2000
+phy_init,   data, phy,      0x10000,  0x1000
+app0,       app,  ota_0,    0x20000,  0x300000
+app1,       app,  ota_1,    0x320000, 0x300000
+spiffs,     data, spiffs,   0x620000, 0x1D0000
+coredump,   data, coredump, 0x7F0000, 0x10000

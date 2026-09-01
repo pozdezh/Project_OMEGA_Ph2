@@ -1,0 +1,6 @@
+The file ca-key.pem must sit in this folder.
+
+It is the master key that signs every new unit's identity.
+Copy it here once, then keep this pendrive somewhere safe.
+
+Without it, "Make NMU Units" will refuse to run.

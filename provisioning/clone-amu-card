@@ -1,0 +1,339 @@
+#!/usr/bin/env bash
+# Write the golden image to a card and turn it into a numbered unit.
+#
+#   sudo ./clone-amu-card AMU_12                  (finds the card by itself)
+#   sudo ./clone-amu-card AMU_12 /dev/mmcblk1     (or name it explicitly)
+#
+# The image comes from read-amu-card, taken from a WORKING unit, so every
+# copy already has the sensor libraries, the enabled I2C and UART, the venv
+# and the systemd service. Nothing is compiled and nothing is downloaded.
+#
+# ---------------------------------------------------------------------------
+# WHY A CLONE NEEDS SURGERY AND NOT JUST A COPY
+#
+# The donor's SD card carries its PRIVATE KEY. Three cards cloned from AMU_T1
+# are three units all claiming to be AMU_T1 with the same key: the server
+# accepts whichever connects first and refuses the rest, so you get one
+# working unit and a pile that look fine and are silently dead.
+#
+# It also carries the donor's hostname, its SSH host keys, its buffered
+# readings and its remembered server address. Every one of those has to be
+# replaced or cleared, or two machines end up vouching for each other's
+# identity and the warning that normally catches an impostor never fires.
+#
+# What is deliberately KEPT: ca-cert.pem. That is the shared trust anchor -
+# public material, identical on every unit, and the thing that lets a unit
+# recognise the server.
+# ---------------------------------------------------------------------------
+
+set -u
+TOOL_VERSION="2026-08-26b-contact-clock"
+
+IMAGE="${OMEGA_GOLDEN_IMAGE:-}"
+MNT="/tmp/omega_clone_$$"
+
+bold()  { printf '\033[1m%s\033[0m\n' "$*"; }
+green() { printf '\033[1;32m%s\033[0m\n' "$*"; }
+red()   { printf '\033[1;31m%s\033[0m\n' "$*"; }
+die()   { red "$*"; exit 1; }
+
+UNIT="${1:-}"
+DEVICE="${2:-}"
+
+[ -n "$UNIT" ] || die "usage: sudo $0 AMU_12 [/dev/sdX]"
+case "$UNIT" in
+  AMU_*) ;;
+  *) die "unit name must start with AMU_ (got: $UNIT)" ;;
+esac
+[ "$(id -u)" = "0" ] || die "must be run with sudo - writing a card needs root"
+
+# Under sudo $HOME is root's; the image and the certificates belong to the
+# operator who made them.
+OWNER_HOME="$HOME"
+if [ -n "${SUDO_USER:-}" ]; then
+  OWNER_HOME="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
+  [ -n "$OWNER_HOME" ] || OWNER_HOME="$HOME"
+fi
+# Look in both homes. An image made with sudo before 2026-08-25 landed in
+# /root, because sudo replaces $HOME - and an image the tool cannot find is
+# indistinguishable, from the operator's side, from an image that was never
+# made.
+if [ -z "$IMAGE" ]; then
+  for candidate in "$OWNER_HOME/amu-golden.img" "/root/amu-golden.img"; do
+    [ -f "$candidate" ] && { IMAGE="$candidate"; break; }
+  done
+  [ -n "$IMAGE" ] || IMAGE="$OWNER_HOME/amu-golden.img"
+fi
+PKI_DIR="${OMEGA_PKI_DIR:-$OWNER_HOME/omega_brick4/pki_provisioning}"
+PKI_TOOL="${OMEGA_PKI_TOOL:-$OWNER_HOME/omega_brick4/omega_pki.py}"
+
+[ -f "$IMAGE" ] || die "no golden image at $IMAGE - run read-amu-card first"
+[ -f "$PKI_TOOL" ] || die "omega_pki.py not found at $PKI_TOOL"
+[ -f "$PKI_DIR/ca-key.pem" ] || die "CA key not found in $PKI_DIR"
+
+EXPECT_HOST="$(echo "$UNIT" | tr 'A-Z' 'a-z' | tr -d '_')"
+
+# ------------------------------------------------------------- find the card
+
+root_disk() {
+  local src
+  src="$(findmnt -no SOURCE / 2>/dev/null)" || return 1
+  lsblk -no PKNAME "$src" 2>/dev/null | head -1
+}
+ROOT_DISK="$(root_disk)"
+
+if [ -z "$DEVICE" ]; then
+  CANDIDATES=""
+  for path in /sys/block/sd* /sys/block/mmcblk*; do
+    [ -e "$path" ] || continue
+    name="$(basename "$path")"
+    [ "$name" = "$ROOT_DISK" ] && continue
+    if [ "$(cat "$path/removable" 2>/dev/null)" != "1" ]; then
+      case "$name" in mmcblk*) ;; *) continue ;; esac
+    fi
+    CANDIDATES="$CANDIDATES $name"
+  done
+  set -- $CANDIDATES
+  case $# in
+    0) die "no card found. Is one in the slot?" ;;
+    1) DEVICE="/dev/$1" ;;
+    *) red "More than one card is connected:"
+       for n in "$@"; do lsblk -o NAME,SIZE,MODEL "/dev/$n" | tail -1; done
+       die "leave only the target card, or name the device explicitly" ;;
+  esac
+fi
+
+[ -b "$DEVICE" ] || die "$DEVICE is not a block device"
+[ "$(basename "$DEVICE")" = "$ROOT_DISK" ] && die "REFUSED: $DEVICE is the disk this computer boots from"
+
+IMG_BYTES="$(stat -c %s "$IMAGE")"
+CARD_BYTES="$(blockdev --getsize64 "$DEVICE")"
+if [ "$CARD_BYTES" -lt "$IMG_BYTES" ]; then
+  die "card is smaller than the image: $(numfmt --to=iec "$CARD_BYTES") < $(numfmt --to=iec "$IMG_BYTES")"
+fi
+
+# ------------------------------------------------- check the image FIRST
+#
+# Verify the source before destroying the target. The old order wrote 29 GB
+# and only then looked inside, so a bad image cost seven minutes and a card
+# before saying so.
+bold "Checking the image..."
+IMG_MNT="/tmp/omega_img_$$"
+LOOP="$(losetup -f -P --show "$IMAGE" 2>/dev/null)" \
+  || die "could not open the image - is it complete? ($IMAGE)"
+mkdir -p "$IMG_MNT"
+if ! mount "${LOOP}p2" "$IMG_MNT" 2>/dev/null; then
+  losetup -d "$LOOP" 2>/dev/null
+  die "the image has no readable second partition - it is probably truncated"
+fi
+
+IMG_HOME="$(ls -d "$IMG_MNT"/home/*/omega_amu 2>/dev/null | head -1)"
+IMG_HOST="$(tr -d '[:space:]' < "$IMG_MNT/etc/hostname" 2>/dev/null)"
+IMG_CERTS="$(ls "$IMG_MNT"/home/*/omega_amu/pki/ 2>/dev/null | tr '\n' ' ')"
+umount "$IMG_MNT" 2>/dev/null
+rmdir "$IMG_MNT" 2>/dev/null
+losetup -d "$LOOP" 2>/dev/null
+
+[ -n "$IMG_HOME" ] || die "no omega_amu install inside the image - this is not a clone of a working unit"
+green "  install found: $IMG_HOME"
+green "  donor hostname: ${IMG_HOST:-unknown}  (will become $EXPECT_HOST)"
+green "  files in pki: ${IMG_CERTS:-none}"
+echo
+
+bold "About to ERASE this card and write $UNIT onto it:"
+lsblk -o NAME,SIZE,TYPE,RM,TRAN,MODEL,MOUNTPOINT "$DEVICE"
+echo
+echo "  image      : $IMAGE  ($(numfmt --to=iec "$IMG_BYTES"))"
+echo "  target     : $DEVICE  ($(numfmt --to=iec "$CARD_BYTES"))"
+echo "  boot disk  : /dev/$ROOT_DISK  (never touched)"
+echo
+red "EVERYTHING CURRENTLY ON $DEVICE WILL BE DESTROYED."
+printf 'Type the device name to confirm (%s): ' "$DEVICE"
+read -r CONFIRM
+[ "$CONFIRM" = "$DEVICE" ] || die "not confirmed - nothing was changed"
+
+# ------------------------------------------------------------------ write
+
+for part in "$DEVICE"?* "$DEVICE"p*; do
+  [ -b "$part" ] || continue
+  if findmnt -no TARGET "$part" >/dev/null 2>&1; then
+    umount "$part" 2>/dev/null || udisksctl unmount -b "$part" >/dev/null 2>&1 \
+      || die "$part is busy - close any file manager window showing the card"
+  fi
+done
+
+bold "Writing the image (several minutes)..."
+dd if="$IMAGE" of="$DEVICE" bs=4M status=progress conv=fsync || die "write failed"
+sync
+partprobe "$DEVICE" 2>/dev/null || true
+sleep 3
+green "  image written"
+
+# ---------------------------------------------------------------- surgery
+
+case "$DEVICE" in
+  *mmcblk*|*nvme*) ROOT_PART="${DEVICE}p2" ;;
+  *) ROOT_PART="${DEVICE}2" ;;
+esac
+[ -b "$ROOT_PART" ] || die "$ROOT_PART not found after writing - the image may be incomplete"
+
+mkdir -p "$MNT"
+mount "$ROOT_PART" "$MNT" || die "could not mount $ROOT_PART"
+cleanup() { umount "$MNT" 2>/dev/null; rmdir "$MNT" 2>/dev/null; }
+trap cleanup EXIT
+
+AMU_HOME="$(ls -d "$MNT"/home/*/omega_amu 2>/dev/null | head -1)"
+[ -n "$AMU_HOME" ] || die "no omega_amu directory in the image - is this really a clone of a working unit?"
+USER_HOME="$(dirname "$AMU_HOME")"
+CARD_USER="$(basename "$USER_HOME")"
+green "  found the donor install at $AMU_HOME (user: $CARD_USER)"
+
+bold "Removing the donor's identity..."
+rm -f "$AMU_HOME"/pki/*-key.pem
+find "$AMU_HOME/pki" -name "*-cert.pem" ! -name "ca-cert.pem" -delete 2>/dev/null
+green "  removed the donor's key and certificate (ca-cert.pem kept)"
+
+rm -f "$AMU_HOME"/offline_buffer.json "$AMU_HOME"/*.log
+rm -f "$USER_HOME"/.omega_server_cache.json
+# The donor's LEARNED heartbeat is donor state like the rest of this block.
+# Left in place it would seed the new unit with a number the server never
+# told IT, and the recovery ladder derives its rungs from that number.
+rm -f "$AMU_HOME"/heartbeat_state.json
+# Same reasoning for the recovery ladder's contact clock: it records
+# when the DONOR last reached the server. A clone that adopted it would
+# boot believing it had already been silent for however long the donor
+# card sat on a desk, and could climb straight to a reboot.
+rm -f "$AMU_HOME"/contact_state.json "$AMU_HOME"/contact_state.json.tmp
+green "  cleared buffered readings, remembered server address, heartbeat and contact clock"
+
+# Two machines sharing an SSH host key is a real problem, not untidiness:
+# each vouches for the other's fingerprint and the warning that normally
+# catches an impostor never fires. Deleted here, regenerated on first boot.
+rm -f "$MNT"/etc/ssh/ssh_host_*
+rm -f "$MNT"/var/lib/systemd/random-seed
+rm -rf "$MNT"/var/log/journal/* 2>/dev/null
+
+# EMPTY, not deleted. /etc/machine-id is this system's unique identity: it
+# seeds the systemd journal id and the DHCP client identifier, so every clone
+# sharing the donor's would be, to the network, the same machine.
+#
+# It also gates first-boot work. regenerate_ssh_host_keys.service carries
+# ConditionFirstBoot=yes, and systemd decides "first boot" by whether this
+# file is EMPTY. On a clone it was populated, so the unit was skipped, the
+# host keys stayed deleted, and sshd refused to start - SSH was dead on all
+# seven clones while the units themselves ran perfectly. The file must exist
+# and be empty; deleting it outright is not the same thing.
+: > "$MNT/etc/machine-id"
+rm -f "$MNT/var/lib/dbus/machine-id"
+green "  cleared SSH host keys, random seed, logs and machine-id"
+green "  (first boot will regenerate host keys and a fresh machine identity)"
+
+bold "Issuing $UNIT its own identity..."
+if [ ! -f "$PKI_DIR/$UNIT-cert.pem" ]; then
+  python3 "$PKI_TOOL" device "$PKI_DIR" "$UNIT" >/dev/null 2>&1 \
+    || die "could not issue a certificate for $UNIT"
+  echo "  issued a new identity"
+else
+  echo "  reusing $UNIT's existing identity"
+fi
+cp "$PKI_DIR/$UNIT-cert.pem" "$PKI_DIR/$UNIT-key.pem" "$AMU_HOME/pki/" \
+  || die "could not install the new identity"
+cp "$PKI_DIR/ca-cert.pem" "$AMU_HOME/pki/ca-cert.pem"
+chmod 600 "$AMU_HOME/pki/$UNIT-key.pem"
+chown -R --reference="$AMU_HOME/main.py" "$AMU_HOME/pki" 2>/dev/null
+green "  installed $UNIT-cert.pem and $UNIT-key.pem"
+
+CONFIG="$AMU_HOME/config/global.ini"
+if [ -f "$CONFIG" ]; then
+  # WiFi, asked the same way nmu_factory.sh asks it, so one operator habit
+  # covers both device types. The donor's own network is offered as the
+  # default: pressing Enter twice reproduces exactly the previous behaviour,
+  # so a same-network clone carries no new risk.
+  DONOR_SSID="$(sed -n 's/^wifi_ssid *= *//p' "$CONFIG" | head -1)"
+  DONOR_PASS="$(sed -n 's/^wifi_pass *= *//p' "$CONFIG" | head -1)"
+  printf 'WiFi network name (SSID) [%s]: ' "${DONOR_SSID:-none}"
+  read -r NEW_SSID
+  NEW_SSID="${NEW_SSID:-$DONOR_SSID}"
+  printf 'WiFi password [keep existing]: '
+  read -r -s NEW_PASS; echo
+  NEW_PASS="${NEW_PASS:-$DONOR_PASS}"
+  [ -n "$NEW_SSID" ] || die "no WiFi network name given and the donor had none"
+
+  # python3, not sed: a WPA passphrase routinely contains &, / and \, every
+  # one of which sed would interpret rather than write.
+  UNIT="$UNIT" NEW_SSID="$NEW_SSID" NEW_PASS="$NEW_PASS" CONFIG="$CONFIG" \
+    python3 - <<'PYEOF' || die "could not write global.ini"
+import os, re
+path = os.environ["CONFIG"]
+with open(path, encoding="utf-8") as handle:
+    text = handle.read()
+for key, value in (("device_id", os.environ["UNIT"]),
+                   ("wifi_ssid", os.environ["NEW_SSID"]),
+                   ("wifi_pass", os.environ["NEW_PASS"])):
+    # A FUNCTION as the replacement, not a string: re treats backslashes in a
+    # replacement string as escapes, so a password containing \o (or \1, or
+    # \\) raises "bad escape" or silently mangles itself. This is the same
+    # class of trap as sed's, one layer down.
+    line = "%s = %s" % (key, value)
+    text, n = re.subn(r"(?m)^%s *=.*$" % key, lambda _m, s=line: s, text)
+    if not n:
+        raise SystemExit("global.ini has no %s line" % key)
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(text)
+PYEOF
+  green "  set device_id = $UNIT, wifi_ssid = $NEW_SSID"
+
+  # The credentials above are what OUR code uses to re-associate a dropped
+  # radio. The OS needs its own copy to get on the network at boot at all,
+  # and the donor's is keyed to the donor's SSID - so when the network
+  # actually changes, replace it rather than leaving a profile that can
+  # never match.
+  if [ "$NEW_SSID" != "$DONOR_SSID" ] || [ "$NEW_PASS" != "$DONOR_PASS" ]; then
+    NM_DIR="$MNT/etc/NetworkManager/system-connections"
+    mkdir -p "$NM_DIR"
+    NEW_SSID="$NEW_SSID" NEW_PASS="$NEW_PASS" NM_DIR="$NM_DIR" python3 - <<'PYEOF' \
+      || die "could not write the WiFi profile"
+import os
+path = os.path.join(os.environ["NM_DIR"], "omega-wifi.nmconnection")
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(
+        "[connection]\nid=omega-wifi\ntype=wifi\ninterface-name=wlan0\n"
+        "autoconnect=true\nautoconnect-retries=0\n\n"
+        "[wifi]\nmode=infrastructure\nssid=%s\n\n"
+        "[wifi-security]\nkey-mgmt=wpa-psk\npsk=%s\n\n"
+        "[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n"
+        % (os.environ["NEW_SSID"], os.environ["NEW_PASS"]))
+os.chmod(path, 0o600)
+PYEOF
+    # netplan re-generates NM profiles for the DONOR's network on every boot,
+    # which would sit alongside ours claiming a network this card can no
+    # longer reach.
+    rm -f "$MNT"/etc/netplan/*NM-*.yaml
+    green "  installed WiFi profile for $NEW_SSID (donor's removed)"
+  fi
+else
+  red "  WARNING: $CONFIG missing - set device_id by hand before first boot"
+fi
+
+# NetworkManager gives up on a network after 4 failed attempts and then sits
+# idle with the radio powered but never retrying - which is how AMU_15 was
+# found after a router-side block was lifted: WiFi hardware enabled, nothing
+# reconnecting, for over an hour. 0 means retry forever. Applied as a global
+# default so it covers the donor's profile too, not just one we wrote.
+mkdir -p "$MNT/etc/NetworkManager/conf.d"
+printf '[connection]\nautoconnect-retries=0\n' \
+  > "$MNT/etc/NetworkManager/conf.d/99-omega-autoconnect.conf"
+green "  WiFi set to retry forever rather than giving up after 4 attempts"
+
+OLD_HOST="$(tr -d '[:space:]' < "$MNT/etc/hostname" 2>/dev/null)"
+echo "$EXPECT_HOST" > "$MNT/etc/hostname"
+[ -n "$OLD_HOST" ] && sed -i "s/\b$OLD_HOST\b/$EXPECT_HOST/g" "$MNT/etc/hosts"
+green "  hostname set to $EXPECT_HOST (was $OLD_HOST)"
+
+echo
+green "$UNIT is ready. Eject the card, put it in the Pi, and power it on."
+echo
+echo "It joins the server by itself within about a minute - the software is"
+echo "already installed and configured, so there is nothing to wait for."
+echo
+echo "Reach it at:  ssh $CARD_USER@$EXPECT_HOST.local"

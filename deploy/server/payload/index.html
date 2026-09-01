@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Ageing - Fleet Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <style>
+        :root {
+            /* Windows Vista/7 "Aero Glass" palette - deep blue glass over a
+               dark glowing ground, thin bright top rim, not a bright wash.
+               Named "AURA" per the user's own pun on Frutiger AERO. */
+            --bg-deep: #0b1f33;
+            --bg-mid: #123a5c;
+            --bg-glow: #245e88;
+            --ink: #eaf3fb;
+            --ink-soft: #a9c2d9;
+            --glass-fill: rgba(60, 110, 160, 0.20);
+            --glass-rim: rgba(255, 255, 255, 0.45);
+            --glass-edge: rgba(140, 190, 230, 0.25);
+            --aero-blue: #3a8fd6;
+            --aero-blue-deep: #1c5c94;
+            --aero-teal: #22b8b0;
+            --aero-leaf: #5cb85c;
+            --aero-amber: #e0972e;
+            --aero-coral: #e0605f;
+            --shadow: 0 10px 32px rgba(4, 16, 28, 0.55);
+        }
+        * { box-sizing: border-box; }
+        body {
+            background:
+                radial-gradient(circle at 15% 20%, rgba(120,190,255,0.16) 0, rgba(120,190,255,0) 20%),
+                radial-gradient(circle at 82% 15%, rgba(160,220,255,0.12) 0, rgba(160,220,255,0) 18%),
+                radial-gradient(circle at 90% 75%, rgba(80,170,220,0.14) 0, rgba(80,170,220,0) 22%),
+                radial-gradient(circle at 8% 80%, rgba(90,200,190,0.10) 0, rgba(90,200,190,0) 20%),
+                linear-gradient(160deg, var(--bg-deep) 0%, var(--bg-mid) 55%, var(--bg-glow) 100%);
+            background-attachment: fixed;
+            color: var(--ink);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 40px 20px;
+            min-height: 100vh;
+        }
+        .aero-window {
+            position: relative;
+            background: var(--glass-fill);
+            border: 1px solid var(--glass-edge);
+            border-radius: 18px;
+            backdrop-filter: blur(22px) saturate(150%);
+            -webkit-backdrop-filter: blur(22px) saturate(150%);
+            box-shadow: var(--shadow), inset 0 1px 0 rgba(255,255,255,0.25);
+            padding: 30px;
+            max-width: 1200px;
+            margin: 0 auto 40px auto;
+            overflow: hidden;
+        }
+        /* Authentic Aero glass sheen: a crisp bright rim right at the top
+           edge that fades out fast, not a broad bright zone. */
+        .aero-window::before {
+            content: "";
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 42%;
+            background: linear-gradient(180deg,
+                var(--glass-rim) 0%,
+                rgba(255,255,255,0.10) 6%,
+                rgba(255,255,255,0.04) 40%,
+                rgba(255,255,255,0) 100%);
+            border-radius: 18px 18px 50% 50% / 18px 18px 30px 30px;
+            pointer-events: none;
+        }
+        .aero-window > * { position: relative; }
+        h1, h2 {
+            text-align: center;
+            margin-top: 0;
+            color: var(--ink);
+            text-shadow: 0 1px 3px rgba(0,0,0,0.4);
+        }
+        .subcaption { text-align: center; color: var(--ink-soft); font-size: 13px; margin: -8px 0 18px; }
+        .chart-container { position: relative; height: 400px; width: 100%; margin-top: 20px; }
+
+        .log-container {
+            height: 250px;
+            overflow-y: auto;
+            background: rgba(8, 24, 40, 0.38);
+            border-radius: 14px;
+            padding: 15px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 14px;
+            border: 1px solid rgba(140,190,230,0.2);
+            box-shadow: inset 0 1px 10px rgba(0,8,16,0.45);
+        }
+        .log-entry { margin-bottom: 8px; border-bottom: 1px solid rgba(140,190,230,0.14); padding-bottom: 8px; }
+        .log-time { color: #7ec8f2; }
+        .log-id { color: #5fe0d8; font-weight: bold; }
+        .log-cause { color: #f0b35c; }
+        .alarm-banner {
+            background: hsl(0, 70%, 24%);
+            border: 2px solid hsl(0, 85%, 58%);
+            border-radius: 8px;
+            color: #ffe9e9;
+            font-weight: bold;
+            margin: 0 auto 14px auto;
+            max-width: 1100px;
+            padding: 12px 18px;
+        }
+        .alarm-banner .alarm-row { padding: 3px 0; }
+        .alarm-banner .alarm-age { color: #ffb3b3; font-weight: normal; }
+
+        /* Glossy pill button - Aero's own control style, toned to match. */
+        button, .aero-btn {
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: 600;
+            color: #ffffff;
+            border: 1px solid var(--aero-blue-deep);
+            border-radius: 999px;
+            padding: 8px 20px;
+            cursor: pointer;
+            background: linear-gradient(180deg, #5fb0ea 0%, var(--aero-blue) 48%, var(--aero-blue-deep) 100%);
+            box-shadow: 0 3px 10px rgba(10,40,70,0.5), inset 0 1px 0 rgba(255,255,255,0.5);
+            text-shadow: 0 -1px 0 rgba(0,0,0,0.3);
+            transition: filter 0.15s ease, transform 0.05s ease;
+        }
+        button:hover { filter: brightness(1.1); }
+        button:active { transform: translateY(1px); filter: brightness(0.95); }
+
+        /* Window-selector buttons: the SELECTED one must be unmistakable at
+           a glance, not just a subtle shade change. */
+        .win-btn {
+            margin: 4px;
+            background: rgba(60, 110, 160, 0.25);
+            border: 1px solid rgba(140,190,230,0.35);
+            box-shadow: none;
+            text-shadow: none;
+            color: var(--ink-soft);
+        }
+        .win-btn.active {
+            background: linear-gradient(180deg, #5fb0ea 0%, var(--aero-blue) 48%, var(--aero-blue-deep) 100%);
+            border: 1px solid var(--aero-blue-deep);
+            box-shadow: 0 3px 10px rgba(10,40,70,0.5), inset 0 1px 0 rgba(255,255,255,0.5);
+            color: #ffffff;
+            text-shadow: 0 -1px 0 rgba(0,0,0,0.3);
+        }
+
+        input[type="number"] {
+            font-family: inherit;
+            border: 1px solid rgba(140,190,230,0.35);
+            border-radius: 10px;
+            padding: 6px 10px;
+            background: rgba(8, 24, 40, 0.4);
+            color: var(--ink);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="alarmBanner" class="alarm-banner" style="display:none;"></div>
+
+    <div class="aero-window">
+        <h1>Smart Ageing Telemetry</h1>
+
+        <h2>System Event Log</h2>
+        <div class="log-container" id="eventLog">
+            <i>Waiting for telemetry data...</i>
+        </div>
+    </div>
+
+    <div class="aero-window">
+        <h2>Time Window</h2>
+        <p class="subcaption">Applies to both graphs below. A busy device (especially the NMU, which can trigger several times a minute) crowds a long window with overlapping points - pick a shorter one to spread them out.</p>
+        <div id="windowButtons" style="text-align:center;">
+            <button class="win-btn" data-s="900">15 min</button>
+            <button class="win-btn" data-s="3600">1 hour</button>
+            <button class="win-btn" data-s="21600">6 hours</button>
+            <button class="win-btn" data-s="86400">24 hours</button>
+            <button class="win-btn" data-s="604800">7 days</button>
+        </div>
+    </div>
+
+    <div class="aero-window">
+        <h2>Acoustic Activity</h2>
+        <p class="subcaption">Y axis: sound level in dB SPL (sound pressure level) - the standard scale, zeroed at 20 micropascals. Calibrated so 94 dB SPL equals 1 Pascal, the industry-standard test tone. Hover or tap a point for its exact time, level, and how long the sound lasted. On long windows the chart shows the loudest event per interval.</p>
+        <div class="chart-container"><canvas id="noiseChart"></canvas></div>
+    </div>
+
+    <div class="aero-window">
+        <h2>Air Quality (CO2)</h2>
+        <p class="subcaption">Y axis: CO2 concentration in parts per million (ppm). Hover or tap a point for the exact time and every sensor reading behind it, plus why that record was sent. On long windows the chart shows the highest-CO2 record per interval.</p>
+        <div class="chart-container"><canvas id="airChart"></canvas></div>
+    </div>
+
+    <div class="aero-window">
+        <h2>Device Keys</h2>
+        <div class="log-container" style="height: auto; max-height: 240px;" id="keyPanel">
+            <i>Loading device list...</i>
+        </div>
+    </div>
+
+    <div class="aero-window">
+        <h2>Device Heartbeat</h2>
+        <div style="padding: 10px;">
+            <p style="opacity:0.85;margin-top:0;">Enter the new reporting heartbeat interval in <b>minutes</b>. It is delivered to each device inside its next authenticated ACK - no restart. Leave a field blank to leave that type unchanged.</p>
+            <div class="log-entry">
+                <label class="log-id" style="display:inline-block;width:110px;">NMU units (min)</label>
+                <input id="nmuHb" type="number" min="1" placeholder="e.g. 30" style="width:100px;">
+            </div>
+            <div class="log-entry">
+                <label class="log-id" style="display:inline-block;width:110px;">AMU units (min)</label>
+                <input id="amuHb" type="number" min="1" placeholder="e.g. 30" style="width:100px;">
+            </div>
+            <button onclick="pushHeartbeat()">Program &amp; send on next ACK</button>
+            <span id="hbStatus" style="margin-left:10px;"></span>
+        </div>
+    </div>
+
+<script>
+        let noiseChartInstance = null;
+        let airChartInstance = null;
+        // Time window is user-selectable (see the buttons above the charts) -
+        // not fixed, because a busy NMU crowds a long window with
+        // overlapping points. 1 hour is the starting point.
+        let currentWindowS = 3600;
+
+        // Aero palette - soft glass tones, still distinct hue-to-hue.
+        const colorPalette = [
+            { border: '#3a8fd6', bg: 'rgba(58, 143, 214, 0.28)' },
+            { border: '#22b8b0', bg: 'rgba(34, 184, 176, 0.28)' },
+            { border: '#5cb85c', bg: 'rgba(92, 184, 92, 0.28)' },
+            { border: '#e0972e', bg: 'rgba(224, 151, 46, 0.28)' },
+            { border: '#8a7fd6', bg: 'rgba(138, 127, 214, 0.28)' },
+            { border: '#e0605f', bg: 'rgba(224, 96, 95, 0.28)' },
+            { border: '#3dc4e0', bg: 'rgba(61, 196, 224, 0.28)' },
+            { border: '#c7c34a', bg: 'rgba(199, 195, 74, 0.28)' }
+        ];
+
+        // Color is a pure function of the device id string, not of arrival
+        // order - so a device keeps the SAME color across reloads and no
+        // matter which device's data happens to come back first from the DB.
+        // Hashing into a fixed palette collided badly on real fleet names:
+        // NMU_T1 and NMU_16 both landed on slot 6, NMU_06 and NMU_17 both on
+        // 7 - two devices drawn in the same colour on the same chart. Instead
+        // the hash picks a HUE on the full circle, so distinct names get
+        // distinct colours no matter how many units exist, while the colour
+        // stays a pure function of the name (stable across reloads, never
+        // reassigned as points arrive). The palette above is kept only as the
+        // first few well-tuned hues for small fleets.
+        // Sequential hue assignment - see ARCHITECTURE.md 16.
+        const GOLDEN_ANGLE = 137.508;
+        // Red is reserved for alarms, so device hues are drawn from the arc
+        // that excludes it. Without this a device eventually lands on the
+        // alarm colour and a normal reading becomes indistinguishable from a
+        // critical one - the one confusion this dashboard must never cause.
+        const ALARM_COLOR = 'hsl(0, 85%, 58%)';
+        const HUE_START = 30;
+        const HUE_SPAN = 300;
+        const deviceColors = {};
+        let deviceColorCount = 0;
+        function hashDeviceColor(id) {
+            if (!deviceColors[id]) {
+                const index = deviceColorCount++;
+                const hue = HUE_START + ((index * GOLDEN_ANGLE) % HUE_SPAN);
+                const sat = 68 + (index % 2) * 10;
+                const light = 58 + (index % 3) * 5;
+                deviceColors[id] = {
+                    border: 'hsl(' + hue.toFixed(1) + ', ' + sat + '%, ' + light + '%)',
+                    bg: 'hsla(' + hue.toFixed(1) + ', ' + sat + '%, ' + light + '%, 0.28)'
+                };
+            }
+            return deviceColors[id];
+        }
+
+        Chart.defaults.color = '#a9c2d9';
+
+        // 24h clock everywhere on this page, not just the chart axis - a
+        // single consistent format is less to misread than mixing AM/PM
+        // with 24h in different corners of the same screen.
+        function pad2(n) { return String(n).padStart(2, '0'); }
+
+        function fmtExactTime(unixTs) {
+            const d = new Date(unixTs * 1000);
+            return pad2(d.getDate()) + '/' + pad2(d.getMonth() + 1) + '/' + d.getFullYear() +
+                   ', ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+        }
+
+        function formatTime(unixTs) {
+            return new Date(unixTs * 1000).toLocaleTimeString([], { hour12: false });
+        }
+
+        function num(v, digits) {
+            return (v === null || v === undefined) ? '-' : Number(v).toFixed(digits === undefined ? 1 : digits);
+        }
+
+        // Short windows need minute marks (an hour-only axis on a 15-minute
+        // view would show at most one tick); long windows would be cluttered
+        // by anything finer than hours or days. No seconds anywhere - a
+        // point's exact time is always available in its tooltip instead.
+        function tickUnitFor(windowS) {
+            if (windowS <= 3600) return 'minute';
+            if (windowS <= 86400) return 'hour';
+            return 'day';
+        }
+
+        function noisePoint(row) {
+            return { x: row.timestamp * 1000, y: row.db_level,
+                     _rowid: row.rowid, _ts: row.timestamp, _duration: row.duration };
+        }
+
+        function airPoint(row) {
+            return {
+                x: row.timestamp * 1000, y: row.co2,
+                _rowid: row.rowid, _ts: row.timestamp, _cause: row.cause,
+                _alarm: isAlarmCause(row.cause),
+                _scd_temp: row.scd_temp, _scd_hum: row.scd_hum,
+                _dht_temp: row.dht_temp, _dht_hum: row.dht_hum,
+                _pm1: row.pm1, _pm25: row.pm25, _pm10: row.pm10,
+                _env_temp: row.env_temp, _env_hum: row.env_hum,
+                _env_press: row.env_press, _lux: row.lux
+            };
+        }
+
+        function getCommonOptions() {
+            return {
+                maintainAspectRatio: false,
+                interaction: { mode: 'nearest', intersect: true },
+                animation: { duration: 0 },
+                plugins: {
+                    tooltip: {
+                        backgroundColor: 'rgba(8, 24, 40, 0.94)',
+                        titleColor: '#eaf3fb',
+                        bodyColor: '#eaf3fb',
+                        borderColor: 'rgba(140,190,230,0.3)',
+                        borderWidth: 1,
+                        padding: 10,
+                        displayColors: false
+                    }
+                },
+                scales: {
+                    x: {
+                        type: 'time',
+                        // Sliding window, span picked by the buttons above -
+                        // refreshed each update, see refreshTimeWindow().
+                        // Tick granularity adapts too (see tickUnitFor()):
+                        // short windows need minute marks, long ones would
+                        // be unreadable clutter with anything finer than
+                        // hours.
+                        min: Date.now() - currentWindowS * 1000,
+                        max: Date.now(),
+                        time: { unit: tickUnitFor(currentWindowS),
+                                displayFormats: { minute: 'HH:mm', hour: "HH'h'", day: 'dd MMM' } },
+                        title: { display: true, text: 'Time (exact time is in the tooltip)' },
+                        grid: { color: 'rgba(140, 190, 230, 0.12)' }
+                    },
+                    y: {
+                        grid: { color: 'rgba(140, 190, 230, 0.12)' },
+                        beginAtZero: false,
+                        grace: '10%'
+                    }
+                }
+            };
+        }
+
+        function refreshTimeWindow(chart) {
+            const now = Date.now();
+            chart.options.scales.x.min = now - currentWindowS * 1000;
+            chart.options.scales.x.max = now;
+            chart.options.scales.x.time.unit = tickUnitFor(currentWindowS);
+        }
+
+        // Single place for how a point looks, used everywhere a dataset is
+        // built. A light ring around each point separates it from its
+        // neighbors when several land close together - the main lever
+        // against clutter is the selectable window above, but this helps
+        // at the edges of a busy period too.
+        function datasetStyle(devId, points) {
+            const color = hashDeviceColor(devId);
+            return {
+                label: 'Device ' + devId, data: points,
+                borderColor: color.border, backgroundColor: color.bg,
+                borderWidth: 2, showLine: false,
+                pointRadius: ctx => (ctx.raw && ctx.raw._alarm ? 8 : 6),
+                pointHoverRadius: 9,
+                pointBackgroundColor: ctx => (ctx.raw && ctx.raw._alarm
+                                              ? ALARM_COLOR : color.border),
+                pointBorderColor: ctx => (ctx.raw && ctx.raw._alarm
+                                          ? '#fff' : 'rgba(255,255,255,0.55)'),
+                pointBorderWidth: ctx => (ctx.raw && ctx.raw._alarm ? 2 : 1)
+            };
+        }
+
+        // Two independent channels can both deliver the same real row: the
+        // one-time page-load fetch and the live stream both start at once,
+        // and if a row lands in the small gap between them, each can pick
+        // it up on its own and both add a point for it - one real event
+        // shown twice. The database itself never stores a true duplicate
+        // (see storage.py's unique index); this is purely a display-side
+        // race, fixed here by refusing to add a rowid already present.
+        // See ARCHITECTURE.md 15 - backlog replay arrives out of time order.
+        // Points per device held in the browser. The database keeps every
+        // record; this is only what is drawn. A 40-unit NMU fleet produces
+        // ~13 records a second, so without a ceiling the tab accumulates
+        // hundreds of thousands of objects and dies - see ARCHITECTURE.md 21.
+        const MAX_POINTS_PER_DEVICE = 600;
+
+        // A cause is an alarm if the device said so. The AMU's cause grammar is
+        // fixed server-side (cause_validation.py), so these three prefixes are
+        // the complete set - not a guess at free text.
+        function isAlarmCause(cause) {
+            if (!cause) return false;
+            return cause.indexOf('New Alarm:') === 0 ||
+                   cause.indexOf('Sustained Alarm:') === 0;
+        }
+
+        // Which device is currently in which alarm, and since when. Built from
+        // the record stream itself, so after a reload it only knows as far back
+        // as the loaded window - which is why the AMU re-announces a sustained
+        // alarm on its own clock rather than only on transitions.
+        const activeAlarms = {};
+
+        function noteAlarmState(devId, ts, cause) {
+            if (!cause) return;
+            if (cause.indexOf('All Alarms Cleared') === 0) {
+                delete activeAlarms[devId];
+                return;
+            }
+            if (!isAlarmCause(cause)) return;
+            const name = cause.replace(/^(New|Sustained) Alarm:\s*/, '');
+            const existing = activeAlarms[devId];
+            if (existing && existing.name === name) {
+                existing.last = ts;
+            } else {
+                activeAlarms[devId] = { name: name, since: ts, last: ts };
+            }
+        }
+
+        function fmtAge(seconds) {
+            if (seconds < 60) return Math.round(seconds) + 's';
+            if (seconds < 3600) return Math.round(seconds / 60) + 'm';
+            const hours = Math.floor(seconds / 3600);
+            return hours + 'h ' + Math.round((seconds - hours * 3600) / 60) + 'm';
+        }
+
+        function renderAlarmBanner() {
+            const banner = document.getElementById('alarmBanner');
+            const ids = Object.keys(activeAlarms).sort();
+            if (!ids.length) { banner.style.display = 'none'; return; }
+            const now = Date.now() / 1000;
+            banner.innerHTML = ids.map(function(id) {
+                const a = activeAlarms[id];
+                return '<div class="alarm-row">ALARM &nbsp; ' + id + ' &nbsp; ' +
+                       a.name + ' <span class="alarm-age">active ' +
+                       fmtAge(now - a.since) + '</span></div>';
+            }).join('');
+            banner.style.display = 'block';
+        }
+
+        function pushIfNew(ds, point) {
+            // Set membership, not a linear scan: the scan made every insert
+            // cost O(points already held), which is quadratic over a session.
+            if (!ds._seen) ds._seen = new Set(ds.data.map(p => p._rowid));
+            if (ds._seen.has(point._rowid)) return;
+            ds._seen.add(point._rowid);
+            const outOfOrder = ds.data.length > 0 &&
+                               point.x < ds.data[ds.data.length - 1].x;
+            ds.data.push(point);
+            if (outOfOrder) ds.data.sort((a, b) => a.x - b.x);
+            trimDataset(ds);
+        }
+
+        function trimDataset(ds) {
+            const floor = Date.now() - currentWindowS * 1000;
+            let cut = 0;
+            while (cut < ds.data.length && ds.data[cut].x < floor) cut++;
+            if (ds.data.length - cut > MAX_POINTS_PER_DEVICE) {
+                cut = ds.data.length - MAX_POINTS_PER_DEVICE;
+            }
+            if (cut <= 0) return;
+            for (let i = 0; i < cut; i++) ds._seen.delete(ds.data[i]._rowid);
+            ds.data.splice(0, cut);
+        }
+
+        // One repaint per frame at most. The live stream can deliver dozens of
+        // rows a second across the fleet; repainting per row spends the whole
+        // main thread on Chart.js and the page stops responding to clicks.
+        const pendingRedraw = new Set();
+        let redrawScheduled = false;
+        function scheduleRedraw(chart) {
+            if (!chart) return;
+            pendingRedraw.add(chart);
+            if (redrawScheduled) return;
+            redrawScheduled = true;
+            requestAnimationFrame(function() {
+                redrawScheduled = false;
+                pendingRedraw.forEach(function(c) {
+                    refreshTimeWindow(c);
+                    c.update('none');
+                });
+                pendingRedraw.clear();
+            });
+        }
+
+        function getOrCreateDataset(chart, devId) {
+            let ds = chart.data.datasets.find(d => d.label === 'Device ' + devId);
+            if (ds) return ds;
+            ds = datasetStyle(devId, []);
+            chart.data.datasets.push(ds);
+            return ds;
+        }
+
+        function buildAirChart(initialDatasets) {
+            let airOptions = JSON.parse(JSON.stringify(getCommonOptions()));
+            airOptions.scales.y.title = { display: true, text: 'CO2 (ppm)' };
+            airOptions.plugins.tooltip.callbacks = {
+                title: function(items) {
+                    if (!items.length) return '';
+                    return fmtExactTime(items[0].raw._ts);
+                },
+                label: function(context) {
+                    const r = context.raw;
+                    return [
+                        'CO2: ' + num(r.y, 0) + ' ppm',
+                        'Cause: ' + (r._cause || 'Unknown'),
+                        'SCD30  temp: ' + num(r._scd_temp) + ' °C   hum: ' + num(r._scd_hum) + ' %',
+                        'DHT22  temp: ' + num(r._dht_temp) + ' °C   hum: ' + num(r._dht_hum) + ' %',
+                        'Enviro+  temp: ' + num(r._env_temp) + ' °C   hum: ' + num(r._env_hum) + ' %',
+                        'Enviro+  pressure: ' + num(r._env_press) + ' hPa   lux: ' + num(r._lux, 2),
+                        'PMS5003  PM1: ' + num(r._pm1, 0) + '  PM2.5: ' + num(r._pm25, 0) + '  PM10: ' + num(r._pm10, 0) + ' µg/m³'
+                    ];
+                }
+            };
+            return new Chart(document.getElementById('airChart').getContext('2d'), {
+                type: 'line', data: { datasets: initialDatasets }, options: airOptions
+            });
+        }
+
+        function buildNoiseChart(initialDatasets) {
+            let noiseOptions = JSON.parse(JSON.stringify(getCommonOptions()));
+            noiseOptions.scales.y.title = { display: true, text: 'Noise (dB SPL)' };
+            noiseOptions.plugins.tooltip.callbacks = {
+                title: function(items) {
+                    if (!items.length) return '';
+                    return fmtExactTime(items[0].raw._ts);
+                },
+                label: function(context) {
+                    const r = context.raw;
+                    return [
+                        'Level: ' + num(r.y) + ' dB SPL',
+                        'Duration: ' + num(r._duration, 2) + ' s'
+                    ];
+                }
+            };
+            return new Chart(document.getElementById('noiseChart').getContext('2d'), {
+                type: 'line', data: { datasets: initialDatasets }, options: noiseOptions
+            });
+        }
+
+        function prependLog(devId, ts, cause, extra) {
+            const logContainer = document.getElementById('eventLog');
+            if (logContainer.querySelector('i')) logContainer.innerHTML = '';
+            const line = document.createElement('div');
+            line.className = 'log-entry';
+            line.innerHTML = '<span class="log-time">[' + formatTime(ts) + ']</span> ' +
+                '<span class="log-id">' + devId + '</span> ' + extra + ' ' +
+                '<span class="log-cause">' + (cause || 'Unknown') + '</span>';
+            logContainer.insertBefore(line, logContainer.firstChild);
+            while (logContainer.children.length > 10) {
+                logContainer.removeChild(logContainer.lastChild);
+            }
+        }
+
+        // Full reconciliation: replaces both charts' data wholesale from the
+        // DB. This is the only place old points actually drop off the
+        // sliding window - the live stream below only ever ADDS points, so
+        // without this periodic refetch the window would stop sliding.
+        function reconcileAll() {
+            fetch('/api/air/latest?window_s=' + currentWindowS).then(res => res.json()).then(data => {
+                const grouped = {};
+                data.forEach(row => {
+                    if (!grouped[row.id]) grouped[row.id] = [];
+                    grouped[row.id].push(airPoint(row));
+                });
+                const datasets = Object.keys(grouped).sort().map(id => datasetStyle(id, grouped[id]));
+                if (!airChartInstance) {
+                    airChartInstance = buildAirChart(datasets);
+                } else {
+                    airChartInstance.data.datasets = datasets;
+                }
+                refreshTimeWindow(airChartInstance);
+                airChartInstance.update('none');
+
+                if (data.length > 0) {
+                    const logContainer = document.getElementById('eventLog');
+                    logContainer.innerHTML = '';
+                    data.forEach(row => noteAlarmState(row.id, row.timestamp, row.cause));
+                    renderAlarmBanner();
+                    data.slice(-10).reverse().forEach(row => {
+                        let causeText = row.cause && row.cause !== 'Unknown' ? row.cause : 'Anomaly Detected';
+                        prependLog(row.id, row.timestamp, causeText, 'logged AirQ event (CO2: ' + row.co2 + ' ppm):');
+                    });
+                }
+            }).catch(err => console.error('Error fetching air data:', err));
+
+            fetch('/api/noise/latest?window_s=' + currentWindowS).then(res => res.json()).then(data => {
+                const grouped = {};
+                data.forEach(row => {
+                    if (!grouped[row.id]) grouped[row.id] = [];
+                    grouped[row.id].push(noisePoint(row));
+                });
+                const datasets = Object.keys(grouped).sort().map(id => datasetStyle(id, grouped[id]));
+                if (!noiseChartInstance) {
+                    noiseChartInstance = buildNoiseChart(datasets);
+                } else {
+                    noiseChartInstance.data.datasets = datasets;
+                }
+                refreshTimeWindow(noiseChartInstance);
+                noiseChartInstance.update('none');
+            }).catch(err => console.error('Error fetching noise data:', err));
+        }
+
+        // Live push: one connection, server sends each new row the instant
+        // it's written. The browser's EventSource reconnects on its own if
+        // the connection drops - no custom retry logic needed here.
+        function startLiveStream() {
+            const source = new EventSource('/api/stream');
+
+            source.addEventListener('air', function(evt) {
+                const rows = JSON.parse(evt.data);
+                if (!airChartInstance) return;
+                rows.forEach(row => {
+                    pushIfNew(getOrCreateDataset(airChartInstance, row.id), airPoint(row));
+                    noteAlarmState(row.id, row.timestamp, row.cause);
+                    let causeText = row.cause && row.cause !== 'Unknown' ? row.cause : 'Anomaly Detected';
+                    prependLog(row.id, row.timestamp, causeText, 'logged AirQ event (CO2: ' + row.co2 + ' ppm):');
+                });
+                renderAlarmBanner();
+                scheduleRedraw(airChartInstance);
+            });
+
+            source.addEventListener('noise', function(evt) {
+                const rows = JSON.parse(evt.data);
+                if (!noiseChartInstance) return;
+                rows.forEach(row => {
+                    pushIfNew(getOrCreateDataset(noiseChartInstance, row.id), noisePoint(row));
+                });
+                scheduleRedraw(noiseChartInstance);
+            });
+        }
+
+        // --- DEVICE KEY PANEL ---
+        function fmtLastSeen(ts) {
+            if (!ts) return 'never';
+            return fmtExactTime(ts);
+        }
+
+        function refreshKeys() {
+            fetch('/api/keys')
+                .then(res => res.json())
+                .then(devices => {
+                    const panel = document.getElementById('keyPanel');
+                    if (!devices.length) {
+                        panel.innerHTML = '<i>No devices seen yet.</i>';
+                        return;
+                    }
+                    panel.innerHTML = devices.map(d => {
+                        const status = d.revoked
+                            ? '<span style="color:#ff8a80;font-weight:bold;">REVOKED</span>'
+                            : '<span style="color:#7ee0a8;font-weight:bold;">ACTIVE</span>';
+                        const action = d.revoked ? 'restore' : 'revoke';
+                        return `<div class="log-entry">` +
+                            `<span class="log-id">${d.id}</span> ${status} ` +
+                            `<span class="log-time">last seen: ${fmtLastSeen(d.last_seen)}</span> ` +
+                            `<button onclick="setRevocation('${d.id}','${action}')">${action}</button>` +
+                            `</div>`;
+                    }).join('');
+                }).catch(err => console.error('Error fetching keys:', err));
+        }
+
+        function setRevocation(deviceId, action) {
+            // No token prompt: reaching this page at all already required a
+            // valid operator certificate, checked by nginx before any
+            // request reaches the app - see server/app.py's module docstring.
+            if (!confirm(action + ' ' + deviceId + '?')) return;
+            fetch('/api/keys/' + action, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: deviceId })
+            }).then(res => {
+                if (!res.ok) alert('Rejected (' + res.status + ')');
+                refreshKeys();
+            }).catch(err => console.error('Key action failed:', err));
+        }
+
+        function refreshHeartbeat() {
+            fetch('/api/config/heartbeat')
+                .then(res => res.json())
+                .then(cfg => {
+                    const n = document.getElementById('nmuHb');
+                    const a = document.getElementById('amuHb');
+                    if (n && cfg.nmu_hb != null && n.value === '') n.placeholder = 'current: ' + cfg.nmu_hb;
+                    if (a && cfg.amu_hb != null && a.value === '') a.placeholder = 'current: ' + cfg.amu_hb;
+                }).catch(err => console.error('Error fetching heartbeat:', err));
+        }
+
+        function pushHeartbeat() {
+            // Same no-token-prompt reasoning as setRevocation() above.
+            const body = {
+                nmu_hb: document.getElementById('nmuHb').value,
+                amu_hb: document.getElementById('amuHb').value
+            };
+            fetch('/api/config/heartbeat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            }).then(res => res.json().then(j => ({ ok: res.ok, j })))
+              .then(({ ok, j }) => {
+                  const s = document.getElementById('hbStatus');
+                  if (!ok) { s.style.color = '#ff8a80'; s.textContent = 'Rejected: ' + (j.error || 'invalid input'); return; }
+                  s.style.color = '#7ee0a8';
+                  s.textContent = 'Queued ' + JSON.stringify(j.applied) + ' - sent on next ACK';
+                  document.getElementById('nmuHb').value = '';
+                  document.getElementById('amuHb').value = '';
+                  refreshHeartbeat();
+              }).catch(err => console.error('Heartbeat push failed:', err));
+        }
+
+        function setWindow(seconds, btn) {
+            currentWindowS = seconds;
+            document.querySelectorAll('.win-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            reconcileAll();
+        }
+
+        document.querySelectorAll('.win-btn').forEach(btn => {
+            btn.addEventListener('click', () => setWindow(parseInt(btn.dataset.s, 10), btn));
+            if (parseInt(btn.dataset.s, 10) === currentWindowS) btn.classList.add('active');
+        });
+
+        reconcileAll();
+        startLiveStream();
+        refreshKeys();
+        refreshHeartbeat();
+        // The banner shows how long each alarm has been active; without its own
+        // tick that number freezes on a quiet site, which reads as a stale page.
+        setInterval(renderAlarmBanner, 15000);
+        setInterval(reconcileAll, 60000);
+        setInterval(refreshKeys, 5000);
+        setInterval(refreshHeartbeat, 8000);
+    </script>
+</body>
+</html>

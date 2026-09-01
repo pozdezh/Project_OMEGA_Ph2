@@ -1,0 +1,24 @@
+Put the fleet's certificate authority here, as two files:
+
+    ca-key.pem      the private half - the crown jewel
+    ca-cert.pem     the public half
+
+WHY THIS FOLDER IS EMPTY IN THE REPOSITORY
+
+The private half is the single most valuable secret in the system. Whoever
+holds it can create a unit that every server in the fleet will trust. It is
+therefore never committed, never published, and never sent by email - it
+travels on a drive, in someone's pocket.
+
+WHAT HAPPENS IF YOU LEAVE THIS EMPTY
+
+setup-server creates a NEW authority. That is correct for a first
+installation and wrong for a rebuild: units built for the old authority will
+refuse the new server, and no configuration fixes that. The script says which
+one it is about to do and waits for you to confirm.
+
+AFTER SETUP
+
+Take these files off the drive and store them somewhere safe and offline. The
+running server keeps its own copy; this one is your way back if the machine
+is ever lost.

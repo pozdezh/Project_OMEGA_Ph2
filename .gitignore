@@ -1,0 +1,32 @@
+# Identity and secrets - never commit these.
+# Every one is generated during provisioning and stays on the machine that
+# made it. Templates ending in .example are committed in their place.
+*.pem
+*.key
+master.key
+omega_certs.h
+config.h
+global.ini
+device_identities.json
+.local_secrets/
+pki_local/
+ca/*.pem
+
+# Keep the templates
+!*.example
+!*.template
+
+# Build output (regenerable)
+build/
+__pycache__/
+*.pyc
+*.elf
+*.bin
+*.map
+out/
+
+# Runtime state
+*.db
+*.db-wal
+*.db-shm
+*.log

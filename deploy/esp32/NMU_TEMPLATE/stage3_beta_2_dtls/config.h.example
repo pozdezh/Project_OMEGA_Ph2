@@ -1,0 +1,21 @@
+// Brick 3 NMU config. Copy to config.h and fill in for this unit.
+// config.h is git-ignored. Device certificate/key are NOT here - they live in
+// omega_certs.h, generated per unit by:
+//   python3 omega_pki.py arduino <pki_dir> NMU_01 omega_certs.h
+// Place omega_certs.h next to the sketch before flashing. Never commit either.
+
+#ifndef CONFIG_H
+#define CONFIG_H
+
+#define OMEGA_WIFI_SSID   "YOUR_WLAN_SSID"
+#define OMEGA_WIFI_PASS   "YOUR_WLAN_PASSWORD"
+
+// Leave the address empty so the device uses server discovery.
+#define OMEGA_SERVER_IP   ""
+#define OMEGA_SERVER_PORT 11400
+
+// DTLS handshake and ACK timeouts (milliseconds).
+#define OMEGA_HANDSHAKE_TIMEOUT_MS 8000
+#define OMEGA_ACK_TIMEOUT_MS       3000
+
+#endif  // CONFIG_H

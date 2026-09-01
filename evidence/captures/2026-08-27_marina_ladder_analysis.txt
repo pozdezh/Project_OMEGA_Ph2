@@ -1,0 +1,38 @@
+capture       : evidence/captures/2026-08-27_marina_ladder.pcap
+datagrams     : 534
+AMU (learned) : 192.168.0.115   <- from the rung A packets
+
+RUNG PROTECTION                   RECS    AVG B   ENTROPY  REPEATED   READABLE
+--------------------------------------------------------------------------------------------
+A    none (plain JSON)            110     478     4.94     2811/3193  "cause" x110, "event" x110, "id" x
+B    AES-128-ECB + HMAC-SHA256    110     512     7.90     2814/3523  none
+C    AES-256-GCM                  110     506     7.98     0/3303     none
+D    DTLS 1.3 (mutual-auth PKI)   4       528     7.91     0/129      none
+--------------------------------------------------------------------------------------------
+REPEATED = identical 16-byte blocks / total blocks in that rung.
+ENTROPY  = bits per byte over the whole rung (8.00 = random).
+
+rung A - none (plain JSON) (port 11501)
+  records            : 110, average 478 bytes
+  entropy            : 4.94 bits/byte
+  16-byte blocks     : 3193 total, 676 distinct, 2811 repeated
+  READABLE ON WIRE   : "cause" x110, "event" x110, "id" x110, "sensors" x110, "ts" x110, "type" x110, AMU_ x110, airq x110, co2_ppm x110, dht22 x110, light_lux x110, pm2_5 x110, scd30 x110, temperature_c x330
+
+rung B - AES-128-ECB + HMAC-SHA256 (port 11502)
+  records            : 110, average 512 bytes
+  entropy            : 7.90 bits/byte
+  16-byte blocks     : 3523 total, 1004 distinct, 2814 repeated
+  readable on wire   : nothing
+
+rung C - AES-256-GCM (port 11503)
+  records            : 110, average 506 bytes
+  entropy            : 7.98 bits/byte
+  16-byte blocks     : 3303 total, 3303 distinct, 0 repeated
+  readable on wire   : nothing
+
+rung D - DTLS 1.3 (mutual-auth PKI) (port 11400)
+  records            : 4, average 528 bytes
+  entropy            : 7.91 bits/byte
+  16-byte blocks     : 129 total, 129 distinct, 0 repeated
+  readable on wire   : nothing
+

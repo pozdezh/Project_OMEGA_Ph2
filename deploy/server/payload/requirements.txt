@@ -1,0 +1,20 @@
+# Brick 4 DTLS 1.3 server dependencies.
+#
+# wolfssl replaces python3-dtls: python3-dtls only speaks DTLS 1.2, and 1.2 is
+# the version that panics the NMU hardware. wolfssl speaks DTLS 1.3 and is the
+# only stack proven to complete a handshake on all three device types.
+#
+# zeroconf publishes the server on the local network so devices discover it
+# instead of carrying a hardcoded address that a DHCP change would break.
+#
+# wolfssl is PINNED, not a floor: PyPI ships it source-only (no wheels), so
+# every install compiles the bundled wolfSSL C library, and an API change in
+# a newer release would only surface after deployment. 5.9.2.post0 is the
+# version soaked on hardware and observed negotiating
+# TLS_AES_256_GCM_SHA384 <-> the NMU's TLS_AES_128_GCM_SHA256
+# (evidence/2026-08-29_amu_cipher_observed.md).
+flask>=3.0
+wolfssl==5.9.2.post0
+zeroconf>=0.130
+cryptography>=42.0
+mcp>=1.0,<2

@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# ONE COMMAND. Bare Ubuntu in, working Omega system out.
+#
+#   ./setup-server
+#
+# Run it from the folder it lives in, on the machine that will BE the server.
+# Nothing else has to be installed first and nothing has to be typed while it
+# runs, except your password when it needs to install software.
+#
+# It is safe to run again. Every step checks whether it is already done, so a
+# second run after a failure continues rather than starting over, and a run on
+# a healthy server leaves the running fleet alone.
+#
+# ---------------------------------------------------------------------------
+# WHAT THIS SETS UP
+#
+#   the listener      units connect here and their readings land in a database
+#   the dashboard     a web page showing the fleet, reachable by name
+#   the certificates  the identities that let units and server trust each other
+#   the maintenance   the database trims itself; a daily summary is prepared
+#   the factory       the tools that build new AMU and NMU units
+#   the console       Claude Code, so the fleet can be asked questions in words
+#
+# ---------------------------------------------------------------------------
+# THE ONE DECISION, AND IT IS NOT REVERSIBLE
+#
+# A fleet trusts a CERTIFICATE AUTHORITY, not a machine. Every unit carries
+# that authority's certificate and will only talk to a server it vouches for.
+#
+#   * Rebuilding a server for an EXISTING fleet: put the fleet's ca-key.pem
+#     and ca-cert.pem in the ca/ folder beside this script first. The units
+#     keep working and never know the machine changed.
+#
+#   * Starting a NEW fleet: leave ca/ empty. A new authority is created here.
+#     Every unit then has to be built fresh - old units will not talk to it,
+#     and no amount of configuration changes that.
+#
+# Getting this wrong is not a setting to correct later, so the script says
+# which one it is doing and gives you a chance to stop.
+# ---------------------------------------------------------------------------
+
+set -u
+SETUP_VERSION="2026-08-26a"
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HUB="$HERE/deploy/server/install_hub.sh"
+
+bold()  { printf '\033[1m%s\033[0m\n' "$*"; }
+green() { printf '\033[1;32m%s\033[0m\n' "$*"; }
+red()   { printf '\033[1;31m%s\033[0m\n' "$*"; }
+die()   { red "$*"; exit 1; }
+
+bold "Omega system setup  ($SETUP_VERSION)"
+echo
+
+# Run as yourself. The installer uses sudo where it must, and everything it
+# creates - certificates, tools, the operator pass - belongs in YOUR home. Run
+# the whole thing as root and those land in /root, where the tools that use
+# them later will not look.
+[ "$(id -u)" != "0" ] || die "do not run this with sudo. Run it as yourself: ./setup-server"
+
+[ -f "$HUB" ] || die "this script must stay inside the project folder (missing $HUB)"
+command -v apt-get >/dev/null 2>&1 || die "this expects Ubuntu or Debian - apt-get is not here"
+command -v sudo >/dev/null 2>&1 || die "sudo is required and is not installed"
+
+# ------------------------------------------------------- which fleet is this
+
+CA_DIR="$HERE/ca"
+mkdir -p "$CA_DIR"
+
+if [ -f "$CA_DIR/ca-key.pem" ] && [ -f "$CA_DIR/ca-cert.pem" ]; then
+  green "EXISTING fleet: the authority in ca/ will be adopted."
+  echo "  Units already built keep working. Nothing about them changes."
+elif [ -f "$CA_DIR/ca-key.pem" ] || [ -f "$CA_DIR/ca-cert.pem" ]; then
+  # Half a CA is worse than none: it is the shape of a restore that went
+  # wrong, and continuing would quietly build a NEW authority over the top.
+  die "ca/ holds only half an authority. Both ca-key.pem and ca-cert.pem are
+needed. Restore the missing one from your offline copy - do not continue,
+or this machine will create a new authority and orphan every unit."
+else
+  red "NEW fleet: no authority found in ca/, so a new one will be created."
+  echo "  Units built for a DIFFERENT authority will not talk to this server."
+  echo "  If you meant to rebuild an existing fleet, stop now and put its"
+  echo "  ca-key.pem and ca-cert.pem in:"
+  echo "     $CA_DIR"
+fi
+
+echo
+printf 'Type yes to continue: '
+read -r answer
+[ "$answer" = "yes" ] || die "nothing was changed"
+echo
+
+# --------------------------------------------------------------- do the work
+
+bash "$HUB" "$@" || die "setup did not finish - the message above says which step"
+
+# ------------------------------------------------------------- what happened
+
+echo
+bold "=============================================================="
+green "Setup finished."
+bold "=============================================================="
+echo
+echo "The dashboard:   https://smartageing.local"
+echo "                 It refuses anyone without the operator pass. That is"
+echo "                 the gate working, not a fault. On this machine run:"
+echo "                     omega-install-operator-cert"
+echo "                 and it will open."
+echo
+echo "Ask about the fleet in plain language:"
+echo "                     claude"
+echo "                     > which units have reported in the last hour?"
+echo
+echo "Build a new noise unit (NMU):    sudo omega-make-units"
+echo "Build a new air unit (AMU):      sudo omega-clone-amu-card AMU_11"
+echo "                 from a blank card and the golden image. If you have no"
+echo "                 image yet, see START_HERE.md section 6 for the other way."
+echo "Repair an air unit's card:       sudo omega-patch-amu-card"
+echo
+echo "Read next:  START_HERE.md  in this folder."

@@ -1,0 +1,297 @@
+#!/usr/bin/env bash
+# Bring an already-deployed AMU card up to the current software, in place.
+#
+#   sudo ./patch-amu-card                  (finds the card by itself)
+#   sudo ./patch-amu-card /dev/mmcblk1     (or name it explicitly)
+#
+# This is NOT clone-amu-card. Nothing is erased and no identity is issued:
+# the unit keeps its name, its key, its certificate and its buffered
+# readings. Only the program files are replaced.
+#
+# ---------------------------------------------------------------------------
+# WHY THIS TOOL EXISTS
+#
+# A software fix normally travels over SSH and never involves a card. On
+# 2026-08-25 that route did not exist: every cloned unit was refusing SSH,
+# because the clone tool deleted the donor's host keys (correctly - two
+# machines must not share one) but the card inherited a populated
+# /etc/machine-id, and Pi OS regenerates host keys only under
+# ConditionFirstBoot=yes, which systemd decides by that file being EMPTY.
+# The units ran perfectly and were unreachable.
+#
+# So this tool does three things in one pass, and the last two matter more
+# than the first:
+#
+#   1. installs the current software
+#   2. gives the unit working SSH with the operator's key already in place
+#   3. arms the Pi's own hardware watchdog, which ships switched off
+#
+# (2) is what makes this the LAST time a card comes out - every later fix
+# travels over the network. (3) is the only protection that survives a
+# kernel or wifi-driver freeze, where every software recovery path is frozen
+# along with everything else.
+# ---------------------------------------------------------------------------
+
+set -u
+TOOL_VERSION="2026-08-26a-nm-retries"
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+PAYLOAD="$HERE/../deploy/amu/payload"
+MNT="/tmp/omega_patch_$$"
+
+bold()  { printf '\033[1m%s\033[0m\n' "$*"; }
+green() { printf '\033[1;32m%s\033[0m\n' "$*"; }
+red()   { printf '\033[1;31m%s\033[0m\n' "$*"; }
+die()   { red "$*"; exit 1; }
+
+DEVICE="${1:-}"
+
+# A card patcher that can only be tried on a real card gets tried for the
+# first time on a real unit. This points it at an ordinary directory laid out
+# like a mounted card instead, so every step below can be exercised and
+# checked before seven units depend on it.
+DRY_MNT="${OMEGA_PATCH_MNT:-}"
+
+[ -n "$DRY_MNT" ] || [ "$(id -u)" = "0" ]   || die "must be run with sudo - writing a card needs root"
+[ -d "$PAYLOAD" ] || die "cannot find the software to install ($PAYLOAD)"
+
+bold "Omega AMU card patcher $TOOL_VERSION"
+echo
+
+# ------------------------------------------------------------- find the card
+
+if [ -n "$DRY_MNT" ]; then
+  [ -d "$DRY_MNT" ] || die "OMEGA_PATCH_MNT is not a directory: $DRY_MNT"
+  red "TEST MODE - working on $DRY_MNT, no card is touched"
+  MNT="$DRY_MNT"
+  cleanup() { :; }
+fi
+
+root_disk() {
+  src="$(findmnt -no SOURCE / 2>/dev/null)" || return 1
+  lsblk -no PKNAME "$src" 2>/dev/null | head -1
+}
+ROOT_DISK="$(root_disk)"
+
+if [ -z "$DEVICE" ] && [ -z "$DRY_MNT" ]; then
+  # A card in the server's BUILT-IN slot is not flagged removable - the
+  # kernel only marks hot-pluggable buses that way, and the internal reader
+  # is not one. Filtering on "removable" alone therefore finds nothing, on
+  # exactly the machine this tool is meant to run on. mmcblk* is admitted on
+  # its name; the boot disk is excluded first, so this cannot select it.
+  CANDIDATES=""
+  for path in /sys/block/sd* /sys/block/mmcblk*; do
+    [ -e "$path" ] || continue
+    name="$(basename "$path")"
+    [ "$name" = "$ROOT_DISK" ] && continue
+    if [ "$(cat "$path/removable" 2>/dev/null)" != "1" ]; then
+      case "$name" in mmcblk*) ;; *) continue ;; esac
+    fi
+    CANDIDATES="$CANDIDATES $name"
+  done
+  set -- $CANDIDATES
+  case $# in
+    0) die "no card found. Is one in the slot?" ;;
+    1) DEVICE="/dev/$1" ;;
+    *) red "More than one card is connected:"
+       for n in "$@"; do lsblk -o NAME,SIZE,MODEL "/dev/$n" | tail -1; done
+       die "leave only the target card, or name the device explicitly" ;;
+  esac
+fi
+
+# Everything from here to the mount is real-card work. Test mode already has
+# a directory laid out like a mounted card and skips straight past it.
+if [ -z "$DRY_MNT" ]; then
+
+[ -b "$DEVICE" ] || die "$DEVICE is not a block device"
+[ "$(basename "$DEVICE")" = "$ROOT_DISK" ] && die "REFUSED: $DEVICE is the disk this computer boots from"
+
+case "$DEVICE" in
+  *mmcblk*|*nvme*) ROOT_PART="${DEVICE}p2" ;;
+  *) ROOT_PART="${DEVICE}2" ;;
+esac
+[ -b "$ROOT_PART" ] || die "$ROOT_PART not found - is this an Omega AMU card?"
+
+# ------------------------------------------------------------------- inspect
+
+for part in "$DEVICE"?* "$DEVICE"p*; do
+  [ -b "$part" ] || continue
+  if findmnt -no TARGET "$part" >/dev/null 2>&1; then
+    umount "$part" 2>/dev/null || udisksctl unmount -b "$part" >/dev/null 2>&1 \
+      || die "$part is busy - close any file manager window showing the card"
+  fi
+done
+
+mkdir -p "$MNT"
+mount "$ROOT_PART" "$MNT" || die "could not mount $ROOT_PART"
+cleanup() { sync; umount "$MNT" 2>/dev/null; rmdir "$MNT" 2>/dev/null; }
+trap cleanup EXIT
+fi
+
+AMU_HOME="$(ls -d "$MNT"/home/*/omega_amu 2>/dev/null | head -1)"
+[ -n "$AMU_HOME" ] || die "no omega_amu install on this card - this is not an AMU unit"
+USER_HOME="$(dirname "$AMU_HOME")"
+
+# Say WHICH unit this is before changing it. The operator is holding seven
+# identical cards; a tool that stays silent about which one it opened is how
+# the wrong unit gets patched twice and another gets missed.
+UNIT="$(sed -n 's/^device_id *= *//p' "$AMU_HOME/config/global.ini" 2>/dev/null | tr -d '[:space:]')"
+HOSTNAME="$(tr -d '[:space:]' < "$MNT/etc/hostname" 2>/dev/null)"
+BUFFERED="$(grep -o '"id"' "$AMU_HOME/offline_buffer.json" 2>/dev/null | wc -l)"
+
+bold "This card is:"
+echo "  unit       : ${UNIT:-UNKNOWN}"
+echo "  hostname   : ${HOSTNAME:-unknown}"
+echo "  buffered   : ${BUFFERED:-0} readings waiting to be sent (kept)"
+echo "  identity   : $(ls "$AMU_HOME/pki"/*-key.pem 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ')"
+echo
+
+[ -n "$UNIT" ] || die "this card has no device_id - refusing to patch a unit I cannot name"
+
+# -------------------------------------------------------------- the software
+
+bold "Installing the current software..."
+UPDATED=0
+for src in "$PAYLOAD"/*.py; do
+  name="$(basename "$src")"
+  # Only replace what this unit already runs. A payload file the card does
+  # not have is a different install shape, not a missing update, and copying
+  # it in blind is how a patch turns into a silent reconfiguration.
+  [ -f "$AMU_HOME/$name" ] || continue
+  if cmp -s "$src" "$AMU_HOME/$name"; then continue; fi
+  cp "$src" "$AMU_HOME/$name" || die "could not write $name"
+  chown --reference="$AMU_HOME/config/global.ini" "$AMU_HOME/$name" 2>/dev/null
+  echo "  updated $name"
+  UPDATED=$((UPDATED + 1))
+done
+[ "$UPDATED" = "0" ] && echo "  already current - nothing to change"
+green "  $UPDATED file(s) updated"
+
+# --------------------------------------------------------- remote access
+
+# The reason this card is in a reader at all, and the part that means it
+# never has to be again.
+#
+# sshd will not start without host keys, and the clone tool deletes the
+# donor's (correctly - two machines must never share one identity, or each
+# vouches for the other and the warning that catches an impostor never
+# fires). Pi OS regenerates them only under ConditionFirstBoot=yes, which
+# systemd decides by /etc/machine-id being EMPTY - and a clone inherits a
+# populated one. So the keys stayed deleted, sshd refused to start, and
+# seven units ran perfectly while being completely unreachable.
+#
+# Generated HERE rather than left to first boot, because "it will fix itself
+# when it starts" is exactly the assumption that failed last time.
+bold "Restoring remote access..."
+rm -f "$MNT"/etc/ssh/ssh_host_*
+ssh-keygen -A -f "$MNT" >/dev/null 2>&1 \
+  || die "could not generate SSH host keys for this card"
+# ssh-keygen -A makes one of every type the build supports, DSA included.
+# Modern sshd will not load a DSA key at all, so it is dead weight that only
+# invites the question of why it is there.
+rm -f "$MNT"/etc/ssh/ssh_host_dsa_key*
+green "  generated this unit's own SSH host keys (unique to $UNIT)"
+
+# machine-id still gets cleared. It seeds the systemd journal id and the DHCP
+# client identifier, so clones sharing the donor's are one machine as far as
+# the network is concerned.
+: > "$MNT/etc/machine-id"
+rm -f "$MNT/var/lib/dbus/machine-id"
+
+if [ -f "$HERE/amu_access.pub" ]; then
+  install -d -m 700 "$USER_HOME/.ssh"
+  touch "$USER_HOME/.ssh/authorized_keys"
+  KEY="$(cat "$HERE/amu_access.pub")"
+  if ! grep -qF "$KEY" "$USER_HOME/.ssh/authorized_keys" 2>/dev/null; then
+    printf '%s\n' "$KEY" >> "$USER_HOME/.ssh/authorized_keys"
+  fi
+  chmod 600 "$USER_HOME/.ssh/authorized_keys"
+  chown -R --reference="$AMU_HOME/config/global.ini" "$USER_HOME/.ssh" 2>/dev/null
+  green "  installed the operator key - login needs no password"
+else
+  red "  WARNING: $HERE/amu_access.pub missing - this unit will need a password"
+fi
+
+ln -sf /lib/systemd/system/ssh.service \
+  "$MNT/etc/systemd/system/multi-user.target.wants/ssh.service" 2>/dev/null
+rm -f "$MNT/etc/ssh/sshd_not_to_be_run"
+green "  ssh enabled at boot"
+# Turn OFF password login, but only once the key above is actually in place -
+# doing it in the other order locks the unit out of its own network.
+#
+# The password is the weak part of this fleet and no better password fixes
+# it: a password lives in /etc/shadow, a card clone copies /etc/shadow byte
+# for byte, so all seven units answer to the SAME password as the card they
+# came from. One guess opens the whole fleet. A key does not have that
+# property - each unit trusts a public key whose private half never leaves
+# the operator's PC.
+#
+# Named 10- deliberately. sshd takes the FIRST value it sees for a keyword,
+# and Pi OS ships 50-cloud-init.conf saying "PasswordAuthentication yes", so
+# a 99- file would be read and ignored: the setting would look applied and
+# do nothing.
+#
+# A screen and keyboard still log in. This changes sshd only, never the
+# console - that is the way back if a key is ever lost.
+if [ -f "$HERE/amu_access.pub" ] && [ -s "$USER_HOME/.ssh/authorized_keys" ]; then
+  mkdir -p "$MNT/etc/ssh/sshd_config.d"
+  cat > "$MNT/etc/ssh/sshd_config.d/10-omega-keys-only.conf" <<'EOC'
+# Installed by patch-amu-card. Keys only over the network.
+# The console (screen + keyboard) is unaffected and still takes a password.
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+EOC
+  green "  password login over SSH disabled - key only (console unaffected)"
+fi
+
+
+# ----------------------------------------------------- the last resort
+
+# A watchdog is a timer in the chip itself that reboots the board unless the
+# operating system keeps telling it "still alive". The Pi has one and it
+# ships switched off.
+#
+# Everything else in this system recovers a unit by running code on it. That
+# only works while code still runs. This is the one protection that survives
+# the case where it does not - a kernel or wifi-driver freeze, where the
+# process watchdog, the recovery ladder and systemd are all frozen too. It
+# is also what the NMU has had all along in its ESP32, and what the AMU
+# never did.
+#
+# The requested 15 s is a REQUEST, not a guarantee: the bcm2835 driver
+# applies its own timeout and on AMU_14 reported back 60 s. What is verified
+# on hardware is that the timer ends up ACTIVE - so this prints no number it
+# cannot stand behind, and the check below reads the real one off the unit.
+CONF="$MNT/etc/systemd/system.conf"
+if [ -f "$CONF" ]; then
+  sed -i 's/^#\?RuntimeWatchdogSec=.*/RuntimeWatchdogSec=15/' "$CONF"
+  grep -q '^RuntimeWatchdogSec=' "$CONF" || echo "RuntimeWatchdogSec=15" >> "$CONF"
+  green "  hardware watchdog requested - the board reboots itself if the"
+  green "  whole system stops responding (confirm the timer once it boots)"
+fi
+
+# NetworkManager gives up on a network after 4 failed attempts and then sits
+# idle with the radio powered but never retrying - which is how AMU_15 was
+# found after a router-side block was lifted: WiFi hardware enabled, nothing
+# reconnecting, for over an hour. 0 means retry forever.
+mkdir -p "$MNT/etc/NetworkManager/conf.d"
+printf '[connection]\nautoconnect-retries=0\n' \
+  > "$MNT/etc/NetworkManager/conf.d/99-omega-autoconnect.conf"
+green "  WiFi set to retry forever rather than giving up after 4 attempts"
+
+sync
+echo
+green "DONE - $UNIT is patched. Put the card back in the unit and power it on."
+echo
+echo "This unit now has:"
+echo "  - the current software"
+echo "  - SSH with the operator key (no password, no card needed again)"
+echo "  - the hardware watchdog armed (a total freeze reboots the board)"
+echo
+echo "Verify about a minute after it boots - all three in one line:"
+echo "  ssh ${HOSTNAME:-$UNIT} 'systemctl is-active omega-amu; \\"
+echo "     cat /sys/class/watchdog/watchdog0/state'"
+echo
+echo "Expect: active / active. The second is the hardware timer - if it says"
+echo "anything else the watchdog did not take, and only a person can recover"
+echo "this unit from a total freeze."

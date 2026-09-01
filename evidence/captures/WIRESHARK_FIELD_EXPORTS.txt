@@ -1,0 +1,131 @@
+# tshark field exports - durable text backing for the DTLS handshake claims
+# Generated 2026-08-29T20:23Z, tshark 4.6.8, on the bench captures
+# (server 192.168.0.112, AMU_16 192.168.0.118, NMU_T1 192.168.0.100, live port 11400)
+
+## FINDINGS (read first)
+
+1. BOTH paths negotiate DTLS 1.3. supported_versions extension = 0xfefc (DTLS 1.3)
+   in every ServerHello and HelloRetryRequest. Zero packets select 0xfefd (1.2).
+   The 'DTLS 1.2 (0xfefd)' in the record/legacy_version field is frozen by RFC 9147
+   and Wireshark's own expert info says to ignore it.
+
+2. A HelloRetryRequest is present on BOTH paths (Random = the RFC 8446 HRR magic
+   cf21ad74...c8a8339c). HRR exists only in (D)TLS 1.3. It also carries a cookie
+   extension = the RFC 9147 return-routability / anti-DoS check, on real hardware.
+
+3. Cipher suite, read from the ServerHello:
+     AMU_16 <-> server : TLS_AES_256_GCM_SHA384 (0x1302)
+     NMU_T1 <-> server : TLS_AES_128_GCM_SHA256 (0x1301)
+
+4. Key-exchange group, read from key_share (ServerHello) and supported_groups (ClientHello):
+     AMU_16 <-> server : SecP384r1MLKEM1024 (0x11ed)  ==  HYBRID post-quantum
+                         (NIST P-384 ECDHE + ML-KEM-1024 / FIPS 203). Not configured
+                         anywhere in the project - it is the wolfSSL 5.9.2 default,
+                         offered by the AMU and selected by the server.
+     NMU_T1 <-> server : secp256r1 (0x17)             ==  classical P-256 ECDHE.
+                         The Arduino wolfSSL 5.8.4 build offers only
+                         secp521/384/256/224 - no MLKEM groups.
+   => 'P-256 ECDHE everywhere' is WRONG. The AMU link is already PQ-hybrid.
+      Certificates are still P-256 ECDSA on both (omega_pki.py CURVE=SECP256R1;
+      AMU ClientHello signature_algorithms include ecdsa_secp256r1_sha256).
+
+5. NMU ClientHello offers 0x1301 but NOT 0x1302/0x1303 - its trimmed build has no
+   SHA-384, so it cannot even propose AES-256. AMU offers 0x1302,0x1301,0x1303.
+
+======================================================================
+FILE: 2026-08-29_hs_amu16.pcap     (link type: )
+----------------------------------------------------------------------
+[A] handshake msgs:  frame | src | dst | hs-type(1=CH,2=SH/HRR) | legacy-ver | supported_versions | offered/selected cipher(s)
+25 192.168.0.118 192.168.0.112 1 0xfefd 0xfefc 0x1302,0x1301,0x1303,0xc02c,0xc02b,0xc030,0xc02f,0x009f,0x009e,0xcca9,0xcca8,0xccaa,0xc027,0xc023,0xc028,0xc024,0xc00a,0xc009,0xc014,0xc013,0x006b,0x0067,0x0039,0x0033,0xcc14,0xcc13,0xcc15
+26 192.168.0.118 192.168.0.112 1 0xfefd 0xfefc 0x1302,0x1301,0x1303,0xc02c,0xc02b,0xc030,0xc02f,0x009f,0x009e,0xcca9,0xcca8,0xccaa,0xc027,0xc023,0xc028,0xc024,0xc00a,0xc009,0xc014,0xc013,0x006b,0x0067,0x0039,0x0033,0xcc14,0xcc13,0xcc15
+27 192.168.0.112 192.168.0.118 2 0xfefd 0xfefc 0x1302
+28 192.168.0.118 192.168.0.112 1   
+29 192.168.0.118 192.168.0.112 1 0xfefd 0xfefc 0x1302,0x1301,0x1303,0xc02c,0xc02b,0xc030,0xc02f,0x009f,0x009e,0xcca9,0xcca8,0xccaa,0xc027,0xc023,0xc028,0xc024,0xc00a,0xc009,0xc014,0xc013,0x006b,0x0067,0x0039,0x0033,0xcc14,0xcc13,0xcc15
+30 192.168.0.112 192.168.0.118 2   
+31 192.168.0.112 192.168.0.118 2 0xfefd 0xfefc 0x1302
+
+[B] groups:  frame | hs-type | supported_groups | key_share group
+25 1 1 
+26 1 1 
+27 2  
+28 1  
+29 1 1 
+30 2  
+31 2  
+
+[C] ServerHello / HRR detail:
+    Handshake Type: Server Hello (2)
+    [Expert Info (Chat/Deprecated): This legacy_version field MUST be ignored. The supported_versions extension is present and MUST be used instead.]
+    [This legacy_version field MUST be ignored. The supported_versions extension is present and MUST be used instead.]
+    Random: cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c (HelloRetryRequest magic)
+    Cipher Suite: TLS_AES_256_GCM_SHA384 (0x1302)
+    Extension: key_share (len=2) SecP384r1MLKEM1024
+    Selected Group: SecP384r1MLKEM1024 (4589)
+    Extension: supported_versions (len=2) DTLS 1.3
+    Supported Version: DTLS 1.3 (0xfefc)
+    Extension: cookie (len=87)
+    Handshake Type: Server Hello (2)
+    Handshake Type: Server Hello (2)
+    [Expert Info (Chat/Deprecated): This legacy_version field MUST be ignored. The supported_versions extension is present and MUST be used instead.]
+    [This legacy_version field MUST be ignored. The supported_versions extension is present and MUST be used instead.]
+    Random: a1125c04457ca4f096ea2f1239099016d15e63fd5d4108ad965c25a1c21b05bf
+    Cipher Suite: TLS_AES_256_GCM_SHA384 (0x1302)
+    Extension: key_share (len=1669) SecP384r1MLKEM1024
+    Key Share Entry: Group: SecP384r1MLKEM1024, Key Exchange length: 1665
+    Group: SecP384r1MLKEM1024 (4589)
+    Extension: supported_versions (len=2) DTLS 1.3
+    Supported Version: DTLS 1.3 (0xfefc)
+
+[D] packets that SELECTED DTLS 1.2 (supported_version==0xfefd): 0  (expect 0)
+
+======================================================================
+FILE: 2026-08-29_hs_nmu_t1.pcap     (link type: )
+----------------------------------------------------------------------
+[A] handshake msgs:  frame | src | dst | hs-type(1=CH,2=SH/HRR) | legacy-ver | supported_versions | offered/selected cipher(s)
+1 192.168.0.100 192.168.0.112 1 0xfefd 0xfefc 0x1301,0xc02b,0xc02f,0xc027,0xc023,0xc00a,0xc009,0xc008,0xc014,0xc013,0xc012
+2 192.168.0.100 192.168.0.112 1 0xfefd 0xfefc 0x1301,0xc02b,0xc02f,0xc027,0xc023,0xc00a,0xc009,0xc008,0xc014,0xc013,0xc012
+3 192.168.0.112 192.168.0.100 2 0xfefd 0xfefc 0x1301
+4 192.168.0.100 192.168.0.112 1 0xfefd 0xfefc 0x1301,0xc02b,0xc02f,0xc027,0xc023,0xc00a,0xc009,0xc008,0xc014,0xc013,0xc012
+5 192.168.0.112 192.168.0.100 2 0xfefd 0xfefc 0x1301
+7 192.168.0.112 192.168.0.100 2 0xfefd 0xfefc 0x1301
+
+[B] groups:  frame | hs-type | supported_groups | key_share group
+1 1 1 
+2 1 1 
+3 2  
+4 1 1 
+5 2  
+7 2  
+
+[C] ServerHello / HRR detail:
+    Handshake Type: Server Hello (2)
+    [Expert Info (Chat/Deprecated): This legacy_version field MUST be ignored. The supported_versions extension is present and MUST be used instead.]
+    [This legacy_version field MUST be ignored. The supported_versions extension is present and MUST be used instead.]
+    Random: cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c (HelloRetryRequest magic)
+    Cipher Suite: TLS_AES_128_GCM_SHA256 (0x1301)
+    Extension: supported_versions (len=2) DTLS 1.3
+    Supported Version: DTLS 1.3 (0xfefc)
+    Extension: cookie (len=69)
+    Handshake Type: Server Hello (2)
+    [Expert Info (Chat/Deprecated): This legacy_version field MUST be ignored. The supported_versions extension is present and MUST be used instead.]
+    [This legacy_version field MUST be ignored. The supported_versions extension is present and MUST be used instead.]
+    Random: e61c6ec009872ba78867604c8a912d8765a2abfa1f58edaff7399209febdb8a2
+    Cipher Suite: TLS_AES_128_GCM_SHA256 (0x1301)
+    Extension: key_share (len=69) secp256r1
+    Key Share Entry: Group: secp256r1, Key Exchange length: 65
+    Group: secp256r1 (23)
+    Extension: supported_versions (len=2) DTLS 1.3
+    Supported Version: DTLS 1.3 (0xfefc)
+    Handshake Type: Server Hello (2)
+    [Expert Info (Chat/Deprecated): This legacy_version field MUST be ignored. The supported_versions extension is present and MUST be used instead.]
+    [This legacy_version field MUST be ignored. The supported_versions extension is present and MUST be used instead.]
+    Random: e61c6ec009872ba78867604c8a912d8765a2abfa1f58edaff7399209febdb8a2
+    Cipher Suite: TLS_AES_128_GCM_SHA256 (0x1301)
+    Extension: key_share (len=69) secp256r1
+    Key Share Entry: Group: secp256r1, Key Exchange length: 65
+    Group: secp256r1 (23)
+    Extension: supported_versions (len=2) DTLS 1.3
+    Supported Version: DTLS 1.3 (0xfefc)
+
+[D] packets that SELECTED DTLS 1.2 (supported_version==0xfefd): 0  (expect 0)
+

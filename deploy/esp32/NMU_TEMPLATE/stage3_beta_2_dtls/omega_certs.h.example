@@ -1,0 +1,11 @@
+// Copy the generated omega_certs.h into this folder before compiling.
+// Generate it on the server with omega_pki.py. Never commit the generated file.
+#ifndef OMEGA_CERTS_H
+#define OMEGA_CERTS_H
+
+static const char* OMEGA_DEVICE_ID = "REPLACE_WITH_NMU_NAME";
+static const char* OMEGA_CA_CERT_PEM = "REPLACE_WITH_GENERATED_CA_CERT";
+static const char* OMEGA_DEVICE_CERT_PEM = "REPLACE_WITH_GENERATED_DEVICE_CERT";
+static const char* OMEGA_DEVICE_KEY_PEM = "REPLACE_WITH_GENERATED_DEVICE_KEY";
+
+#endif

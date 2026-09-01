@@ -1,0 +1,38 @@
+﻿
+BOOT: reset_reason=1 (1=power-on 4=panic 6=task-wdt 9=brownout 11=usb)
+BOOT: heap=272000 largest_dma_block=212980
+POSTMORTEM: previous boot ended reason=1 after 237s
+BOOT: clock=1787637876 (build floor applied)
+BOOT: audio OK
+Config OK: id=NMU_18 server=:11400
+BUFFER: mount=1 total=1739681 used=0 mirror=0 tmp=0 bytes=0 restored=0
+BOOT: spreading first handshake by 9099 ms
+WiFi: status=3 ip=192.168.0.111 rssi=-68 bcast=192.168.0.255
+DISCOVERY: candidate 192.168.0.112:11400 (last confirmed, still answering)
+DISCOVERY: mDNS candidate 192.168.0.112:11400 prio=10
+DISCOVERY: broadcast found 192.168.0.112:11400
+DTLS: session #1 up in 4415 ms (DTLSv1.3 / TLS_AES_128_GCM_SHA256)
+Net: DTLS session to 192.168.0.112:11400 UP (handshakes=1)
+Boot session: serverFound=1
+WDT: init_rc=259 reconfigure_rc=0 (0 = applied)
+Sentry: initial sync measurement queued, db=60.85, event=1
+Net: event=2008450699_1 ACK OK
+Sentry: TRIGGERED db=63.08 duration=0.50s event=2
+Net: event=2008450699_2 ACK OK
+Sentry: TRIGGERED db=69.33 duration=0.25s event=3
+Net: event=2008450699_3 ACK OK
+Sentry: TRIGGERED db=60.73 duration=0.50s event=4
+Net: event=2008450699_4 ACK OK
+Sentry: TRIGGERED db=61.46 duration=0.50s event=5
+Net: event=2008450699_5 ACK OK
+Sentry: TRIGGERED db=60.09 duration=0.50s event=6
+Net: event=2008450699_6 ACK OK
+Sentry: TRIGGERED db=59.69 duration=0.50s event=7
+Net: event=2008450699_7 ACK OK
+Sentry: alive, ambient=64.8dB serverFound=1 heap=158156 stack_free[sentry]=5852 stack_free[net]=29280 buffered=0 qdisplaced=0 mirrfail=0 lastreset=1 uptime=30s ps=0 handshakes=1 silent=0s rreset=0 stale=0
+Sentry: alive, ambient=65.5dB serverFound=1 heap=158204 stack_free[sentry]=5852 stack_free[net]=29280 buffered=0 qdisplaced=0 mirrfail=0 lastreset=1 uptime=34s ps=1 handshakes=1 silent=4s rreset=0 stale=0
+Sentry: alive, ambient=65.5dB serverFound=1 heap=158204 stack_free[sentry]=5852 stack_free[net]=29280 buffered=0 qdisplaced=0 mirrfail=0 lastreset=1 uptime=38s ps=1 handshakes=1 silent=8s rreset=0 stale=0
+Sentry: alive, ambient=65.5dB serverFound=1 heap=158204 stack_free[sentry]=5852 stack_free[net]=29280 buffered=0 qdisplaced=0 mirrfail=0 lastreset=1 uptime=42s ps=1 handshakes=1 silent=12s rreset=0 stale=0
+Sentry: alive, ambient=65.6dB serverFound=1 heap=158204 stack_free[sentry]=5852 stack_free[net]=29280 buffered=0 qdisplaced=0 mirrfail=0 lastreset=1 uptime=46s ps=1 handshakes=1 silent=16s rreset=0 stale=0
+Sentry: alive, ambient=65.6dB serverFound=1 heap=158204 stack_free[sentry]=5852 stack_free[net]=29280 buffered=0 qdisplaced=0 mirrfail=0 lastreset=1 uptime=50s ps=1 handshakes=1 silent=20s rreset=0 stale=0
+
