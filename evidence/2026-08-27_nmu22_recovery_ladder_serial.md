@@ -101,8 +101,12 @@ Minor doc gap noted, not a bug: `reset_reason=3` (ESP_RST_SW, from
 (1/4/6/9/11) - worth adding.
 
 Session id and event counter SURVIVED the self-reboot (resumed at 150, not
-reset to a fresh session) - the NVS mirror preserved continuity, not just
-buffered data. Boot-jitter spread (27.6s) applied even on this
+reset to a fresh session). The mechanism is RTC retained memory, not the flash
+mirror: `bootSession` and `eventCounter` are declared `RTC_NOINIT_ATTR` in
+`nmu/omega_tasks.cpp`, so they survive a software reset and are cleared only by
+a loss of power. The flash mirror preserves the buffered records, each carrying
+its own identity; the two mechanisms are separate and an earlier version of
+this note wrongly credited the mirror with both. Boot-jitter spread (27.6s) applied even on this
 self-triggered reboot, exactly as designed.
 
 ## Unplanned finding: lifting the MAC block bounced the whole fleet
@@ -197,7 +201,11 @@ given Linux already handles reassociation transparently. Real tradeoff
 worth flagging for the memo: an AMU WiFi blip can pass with zero log
 evidence, unlike the NMU's loud, visible reconnect.
 
-Block removal and full drain confirmation pending - next step.
+Block removal and full drain confirmation were NOT captured in this run: the
+serial log ends with `buffered` at 51 and still falling. The drain completing
+is evidenced separately, on a different run, in
+`2026-08-21_nmu_outage_restore_cycle.md` (91 records restored from flash and
+delivered in 6 s, zero duplicates).
 
 ## What to check when resuming
 
