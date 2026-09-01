@@ -1,0 +1,178 @@
+I (214) esp_image: segment 4: paddr=0010c23c vaddr=40375828 sizeESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0x15 (USB_UART_CHIP_RESET),boot:0x8 (SPI_FAST_FLASH_BOOT)
+Saved PC:0x4037ab3a
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce2820,len:0x15a0
+load:0x403c8700,len:0x4
+load:0x403c8704,len:0xc80
+load:0x403cb700,len:0x2f0c
+entry 0x403c8914
+I (26) boot: ESP-IDF v5.4.1 2nd stage bootloader
+I (26) boot: compile time Aug 15 2026 00:29:34
+I (27) boot: Multicore bootloader
+I (27) boot: chip revision: v0.2
+I (27) boot: efuse block revision: v1.3
+I (27) boot.esp32s3: Boot SPI Speed : 80MHz
+I (27) boot.esp32s3: SPI Mode       : DIO
+I (28) boot.esp32s3: SPI Flash Size : 8MB
+I (28) boot: Enabling RNG early entropy source...
+I (28) boot: Partition Table:
+I (28) boot: ## Label            Usage          Type ST Offset   Length
+I (28) boot:  0 nvs              WiFi data        01 02 00009000 00006000
+I (29) boot:  1 phy_init         RF data          01 01 0000f000 00001000
+I (29) boot:  2 factory          factory app      00 00 00010000 00200000
+I (30) boot: End of partition table
+I (30) esp_image: segment 0: paddr=00010020 vaddr=3c0d0020 size=29e5ch (171612) map
+I (60) esp_image: segment 1: paddr=00039e84 vaddr=3fc99700 size=04964h ( 18788) load
+I (65) esp_image: segment 2: paddr=0003e7f0 vaddr=40374000 size=01828h (  6184) load
+I (66) esp_image: segment 3: paddr=00040020 vaddr=42000020 size=cc214h (836116) map
+I (214) esp_image: segment 4: paddr=0010c23c vaddr=40375828 size=13each ( 81580) load
+I (232) esp_image: segment 5: paddr=001200f0 vaddr=600fe100 size=0001ch (    28) load
+I (241) boot: Loaded app from partition at offset 0x10000
+I (241) boot: Disabling RNG early entropy source...
+I (242) cpu_start: Multicore app
+I (251) cpu_start: Pro cpu start user code
+I (251) cpu_start: cpu freq: 240000000 Hz
+I (251) app_init: Application information:
+I (251) app_init: Project name:     omega_session_nmu_espidf
+I (252) app_init: App version:      d8a4a31-dirty
+I (252) app_init: Compile time:     Aug 15 2026 00:29:46
+I (252) app_init: ELF file SHA256:  e913eb050...
+I (252) app_init: ESP-IDF:          v5.4.1
+I (252) efuse_init: Min chip rev:     v0.0
+I (252) efuse_init: Max chip rev:     v0.99 
+I (252) efuse_init: Chip rev:         v0.2
+I (253) heap_init: Initializing. RAM available for dynamic allocation:
+I (253) heap_init: At 3FCA8870 len 00040EA0 (259 KiB): RAM
+I (253) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM
+I (253) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM
+I (253) heap_init: At 600FE11C len 00001ECC (7 KiB): RTCRAM
+I (254) spi_flash: detected chip: gd
+I (254) spi_flash: flash io: dio
+I (255) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+I (255) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+I (256) main_task: Started on CPU0
+I (257) main_task: Calling app_main()
+I (257) session_nmu_idf: ========================================
+I (258) session_nmu_idf:  Omega SESSION spike - NMU (raw ESP-IDF)
+I (258) session_nmu_idf:   device id : NMU_T1
+I (258) session_nmu_idf:   target    : 192.168.0.112:11334
+I (258) session_nmu_idf: ========================================
+I (258) session_nmu_idf: ---------- CRYPTO BUILD (compile-time, this binary) ----------
+I (258) session_nmu_idf:   WOLFSSL_ESPIDF : DEFINED (hardware crypto driver files compiled in)
+I (259) session_nmu_idf:   target         : ESP32-S3 (CONFIG_IDF_TARGET_ESP32S3 set)
+I (259) session_nmu_idf:   NO_ESP32_CRYPT : not defined (hardware path active)
+I (259) session_nmu_idf: ----------------------------------------------------------------
+I (272) pp: pp rom version: e7ae62f
+I (273) net80211: net80211 rom version: e7ae62f
+I (275) wifi:wifi driver task: 3fcb5b98, prio:23, stack:6656, core=0
+I (282) wifi:wifi firmware version: 79fa3f41ba
+I (283) wifi:wifi certification version: v7.0
+I (283) wifi:config NVS flash: enabled
+I (283) wifi:config nano formatting: disabled
+I (283) wifi:Init data frame dynamic rx buffer num: 32
+I (284) wifi:Init static rx mgmt buffer num: 5
+I (284) wifi:Init management short buffer num: 32
+I (284) wifi:Init dynamic tx buffer num: 32
+I (284) wifi:Init static tx FG buffer num: 2
+I (284) wifi:Init static rx buffer size: 1600
+I (284) wifi:Init static rx buffer num: 10
+I (285) wifi:Init dynamic rx buffer num: 32
+I (285) wifi_init: rx ba win: 6
+I (286) wifi_init: accept mbox: 6
+I (286) wifi_init: tcpip mbox: 32
+I (286) wifi_init: udp mbox: 6
+I (286) wifi_init: tcp mbox: 6
+I (286) wifi_init: tcp tx win: 5760
+I (286) wifi_init: tcp rx win: 5760
+I (286) wifi_init: tcp mss: 1440
+I (286) wifi_init: WiFi IRAM OP enabled
+I (286) wifi_init: WiFi RX IRAM OP enabled
+I (288) phy_init: phy_version 700,8582a7fd,Feb 10 2025,20:13:11
+I (320) phy: error: pll_cal exceeds 2ms!!!
+I (323) wifi:mode : sta (f0:9e:9e:76:fb:b4)
+I (324) wifi:enable tsf
+I (325) wifi_connect: connecting to SSID test-wifi-net
+I (333) wifi:new:<1,1>, old:<1,0>, ap:<255,255>, sta:<1,1>, prof:1, snd_ch_cfg:0x0
+I (334) wifi:state: init -> auth (0xb0)
+I (346) wifi:state: auth -> assoc (0x0)
+I (355) wifi:state: assoc -> run (0x10)
+I (466) wifi:connected with test-wifi-net, aid = 3, channel 1, 40U, bssid = xx:xx:xx:xx:xx:xx
+I (467) wifi:security: WPA2-PSK, phy: bgn, rssi: -68
+I (469) wifi:pm start, type: 1
+
+I (469) wifi:dp: 1, bi: 102400, li: 3, scale listen interval from 307200 us to 307200 us
+I (469) wifi:set rx beacon pti, rx_bcn_pti: 0, bcn_timeout: 25000, mt_pti: 0, mt_time: 10000
+I (485) wifi:<ba-add>idx:0 (ifx:0, xx:xx:xx:xx:xx:xx), tid:0, ssn:2, winSize:64
+I (540) wifi:AP's beacon interval = 102400 us, DTIM period = 1
+I (1994) esp_netif_handlers: sta ip: 192.168.0.101, mask: 255.255.255.0, gw: 192.168.0.1
+I (1995) wifi_connect: got ip: 192.168.0.101
+I (4726) time_helper: clock set, epoch now 1786746866
+I (4734) session_nmu_idf: CA, device certificate and key loaded
+I (4738) session_nmu_idf: session id : 2433494233
+I (4738) session_nmu_idf: connecting to 192.168.0.112:11334
+I (9113) session_nmu_idf: DTLS: handshake OK
+I (9113) session_nmu_idf:   version   : DTLSv1.3
+I (9114) session_nmu_idf:   cipher    : TLS_AES_128_GCM_SHA256
+I (9114) session_nmu_idf:   handshake : 4374 ms
+I (9114) session_nmu_idf: streaming 40 records at 500 ms intervals over the OPEN session
+I (9114) session_nmu_idf: (no handshake happens again from here on)
+I (9141) session_nmu_idf: record   1:   27 ms  ack={"ack":"2433494233_1","cfg":{"hb":30,"thr":85.0,"n":1},"dup":0}
+I (9666) session_nmu_idf: record   2:   52 ms  ack={"ack":"2433494233_2","cfg":{"hb":30,"thr":85.0,"n":2},"dup":0}
+I (10273) session_nmu_idf: record   3:  160 ms  ack={"ack":"2433494233_3","cfg":{"hb":30,"thr":85.0,"n":3},"dup":0}
+I (13652) session_nmu_idf: record  10:   44 ms  ack={"ack":"2433494233_10","cfg":{"hb":30,"thr":85.0,"n":10},"dup":0}
+I (18773) session_nmu_idf: record  20:  173 ms  ack={"ack":"2433494233_20","cfg":{"hb":30,"thr":85.0,"n":20},"dup":0}
+I (23791) session_nmu_idf: record  30:  200 ms  ack={"ack":"2433494233_30","cfg":{"hb":30,"thr":85.0,"n":30},"dup":0}
+I (28808) session_nmu_idf: record  40:  226 ms  ack={"ack":"2433494233_40","cfg":{"hb":30,"thr":85.0,"n":40},"dup":0}
+I (29084) session_nmu_idf: ========== SESSION RESULT ==========
+I (29084) session_nmu_idf:   handshakes        : 1
+I (29084) session_nmu_idf:   handshake cost    : 4374 ms   (paid ONCE)
+I (29085) session_nmu_idf:   records sent      : 40
+I (29085) session_nmu_idf:   acks received     : 40
+I (29085) session_nmu_idf:   lost              : 0
+I (29085) session_nmu_idf:   per-record min    : 27 ms
+I (29085) session_nmu_idf:   per-record avg    : 146 ms
+I (29085) session_nmu_idf:   per-record max    : 228 ms
+I (29085) session_nmu_idf:   free heap now     : 227432 bytes
+I (29086) session_nmu_idf: =====================================
+I (29086) session_nmu_idf: RESULT: PASS
+I (29086) session_nmu_idf: ########## HARDWARE CRYPTO RUNTIME METRICS ##########
+I (29086) wolfssl_esp32_mp: 
+I (29086) wolfssl_esp32_mp: esp_mp_mul HW acceleration enabled.
+I (29086) wolfssl_esp32_mp: Number of calls to esp_mp_mul: 44055
+I (29087) wolfssl_esp32_mp: Number of calls to esp_mp_mul with tiny operands: 0
+I (29087) wolfssl_esp32_mp: Number of calls to esp_mp_mul HW operand exceeded: 0
+I (29087) wolfssl_esp32_mp: Success: no esp_mp_mul() errors.
+I (29087) wolfssl_esp32_mp: 
+I (29087) wolfssl_esp32_mp: esp_mp_mulmod HW acceleration enabled.
+I (29087) wolfssl_esp32_mp: Number of calls to esp_mp_mulmod: 29
+I (29088) wolfssl_esp32_mp: Number of calls to esp_mp_mulmod HW operand exceeded: 0
+I (29088) wolfssl_esp32_mp: Number of fallback to SW mp_mulmod: 7
+I (29088) wolfssl_esp32_mp: Success: no esp_mp_mulmod errors.
+I (29088) wolfssl_esp32_mp: Success: no esp_mp_mulmod even mod.
+I (29088) wolfssl_esp32_mp: Success: no esp_mp_mulmod small x or y.
+I (29088) wolfssl_esp32_mp: 
+I (29089) wolfssl_esp32_mp: Number of calls to esp_mp_exptmod: 0
+I (29089) wolfssl_esp32_mp: Number of calls to esp_mp_exptmod HW operand exceeded: 0
+I (29089) wolfssl_esp32_mp: Number of fallback to SW mp_exptmod: 0
+I (29089) wolfssl_esp32_mp: Success: no esp_mp_exptmod errors.
+I (29089) wolfssl_esp32_mp: Max N->used: esp_mp_max_used = 16
+I (29089) wolfssl_esp32_mp: Max hw wait timeout: esp_mp_max_wait_timeout = 1
+I (29090) wolfssl_esp32_mp: Max calc timeout: esp_mp_max_timeout = 0x00000040
+I (29090) wolf_hw_sha: --------------------------------------------------------
+I (29090) wolf_hw_sha: -------------  wolfSSL ESP HW SHA Metrics  -------------
+I (29090) wolf_hw_sha: --------------------------------------------------------
+I (29090) wolf_hw_sha: esp_sha_hw_copy_ct            = 0
+I (29091) wolf_hw_sha: esp_sha1_hw_usage_ct          = 0
+I (29091) wolf_hw_sha: esp_sha1_sw_fallback_usage_ct = 0
+I (29091) wolf_hw_sha: esp_sha_reverse_words_ct      = 0
+I (29091) wolf_hw_sha: esp_sha1_hw_hash_usage_ct     = 7
+I (29091) wolf_hw_sha: esp_sha2_224_hw_hash_usage_ct = 0
+I (29091) wolf_hw_sha: esp_sha2_256_hw_hash_usage_ct = 102
+I (29091) wolf_hw_sha: esp_byte_reversal_checks_ct   = 0
+I (29091) wolf_hw_sha: esp_byte_reversal_needed_ct   = 0
+I (29092) session_nmu_idf: ####################################################
+I (29095) session_nmu_idf: Trial complete.
+I (29095) main_task: Returned from app_main()
