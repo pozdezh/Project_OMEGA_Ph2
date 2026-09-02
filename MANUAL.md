@@ -400,8 +400,11 @@ reading right now?"*, *"set the air units to report every 10 minutes"*.
 Every night at 03:30 the server prepares a summary for each unit and each
 measurement, and sends it to the research endpoint.
 
-Until you fill in the address and token it only prints the report instead of
-sending it — nothing is lost. See [CONFIGURATION.md](CONFIGURATION.md).
+The system is delivered pushing to a **local stand-in endpoint**, so the path
+is proven end to end before a real one exists. Pointing it at the real address
+is an edit to two lines in one file and needs no restart — including what the
+receiving side must accept. See
+[CONFIGURATION.md §7](CONFIGURATION.md#7-the-daily-report).
 
 At 03:15 the database checks its own size and trims the oldest readings if it
 has grown past its limit.
@@ -420,6 +423,8 @@ has grown past its limit.
 | `omega-prepare-amu-card` says there is no bundle | Step 1 was skipped | Run `omega-make-amu-bundle AMU_11` first |
 | A board is not found when flashing | It is not in flashing mode | Hold BOOT, tap RESET, release BOOT — cable stays in |
 | Nothing arrives from any unit at all | The server may be listening on the wrong port | `ss -lunp \| grep 11400` — it must be there |
+| You edited something and nothing changed | Whatever reads that file has not re-read it | [CONFIGURATION.md §11](CONFIGURATION.md#11-what-to-restart-after-a-change) lists what to restart, per file |
+| The nightly report says `REFUSED` | The endpoint address is not `https` | [CONFIGURATION.md §7](CONFIGURATION.md#7-the-daily-report) — the refusal is the safety check doing its job |
 
 Health check, any time, changes nothing:
 

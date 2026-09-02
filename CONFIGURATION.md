@@ -29,6 +29,7 @@ code ever disagree, the code is right — please report it.
 | Change how much history the database keeps | [§8](#8-database-size) |
 | Change how fast a box recovers from an outage | [§9](#9-outage-recovery-timing) |
 | Know what I must never touch | [§10](#10-do-not-change-these) |
+| Know what to restart so a change takes effect | [§11](#11-what-to-restart-after-a-change) |
 
 ---
 
@@ -198,29 +199,124 @@ Every night at **03:30** the server prepares a summary for each unit and each
 measurement — minimum, maximum, average, median and spread — and sends it to
 the research endpoint over HTTPS with a bearer token.
 
-**Until you fill in the address and the token, it prints the report instead of
-sending it.** Nothing is lost and nothing fails.
+**File:** `/etc/cron.d/omega-maintenance` on the server. Everything below is
+edited in that one file. Cron re-reads it by itself — **nothing needs
+restarting.**
 
-**File:** `/etc/cron.d/omega-maintenance` on the server. Add:
+### First, look at what is set today
+
+```bash
+sudo cat /etc/cron.d/omega-maintenance
+```
+
+There are two possible starting points, and they are not the same:
+
+- **Lines starting `OMEGA_STATS_URL=http://127.0.0.1:9443/…`** — this server
+  is pushing to the **local simulator**, a stand-in endpoint
+  (`simlab/boss_endpoint_sim.py`, running as `omega-boss-sim.service`) built
+  so the whole path could be proven before a real endpoint existed. Reports
+  are being delivered, just not to anyone outside the machine.
+- **No `OMEGA_STATS_` lines at all** — a fresh install. The job writes the
+  report into `stats.log` and sends nothing.
+
+Neither state loses data. Edit whichever one you have.
+
+### Switching to the real endpoint
+
+**1. Set the address and the token.** Change these lines if they exist, add
+them if they do not:
 
 ```
 OMEGA_STATS_URL=https://the-endpoint-address/path
 OMEGA_STATS_TOKEN=the-token-they-gave-you
 ```
 
-> **Re-running the installer overwrites this file.** Keep a copy of those two
-> lines somewhere, and put them back after an update.
+**2. Delete the line `OMEGA_STATS_ALLOW_INSECURE=1` if it is there.** It
+exists only for the local simulator. Left behind, it switches off the check
+that stops the report — and the token with it — from ever crossing the
+network unencrypted.
+
+**3. Protect the file, because it now holds a password:**
+
+```bash
+sudo chmod 600 /etc/cron.d/omega-maintenance
+```
+
+**4. Turn the simulator off, if it is running:**
+
+```bash
+sudo systemctl disable --now omega-boss-sim
+```
+
+> **Re-running the installer overwrites this file** and resets its
+> permissions. Keep a copy of your lines somewhere, and redo steps 1–3 after
+> any update.
+
+### Check it before waiting for 03:30
+
+```bash
+cd ~/omega_brick4
+OMEGA_STATS_URL=https://the-endpoint-address/path \
+OMEGA_STATS_TOKEN=the-token-they-gave-you \
+venv/bin/python daily_stats.py sensor_data.db
+```
+
+A working endpoint prints `stats push: delivered`. A refusal prints the reason
+in full. Note that a successful test **counts as delivered** — that period
+will not be sent again at 03:30, which is correct, not a loss.
 
 | Setting | Default | Meaning |
 |---|---|---|
 | `OMEGA_STATS_URL` | *(unset)* | Where to send. Must be `https`. |
 | `OMEGA_STATS_TOKEN` | *(unset)* | Bearer token |
 | `OMEGA_STATS_WINDOW_H` | `24` | Hours covered by the first report |
+| `OMEGA_STATS_ALLOW_INSECURE` | *(unset)* | Simulator only. Permits a plain `http` endpoint. Never set this against a real one. |
 
 If a send fails it retries three times with a growing pause. If all three fail
 the report is **printed** rather than discarded, and the "last delivered"
 marker does not advance — so the next run covers the missed period too, and no
 day is ever silently lost.
+
+### What the receiving endpoint has to do
+
+The push is outbound only: the server sends a POST and reads back nothing but
+the status code. Whoever builds the receiving side needs these five things.
+
+| Requirement | Detail |
+|---|---|
+| Be `https://` | A plain `http` address is refused before the report is even built |
+| Accept `Authorization: Bearer <token>` | Not an API-key header, not a signature |
+| Accept `POST` with `Content-Type: application/json` | The body is one report object |
+| Answer **2xx** | Anything else counts as a failure and is retried |
+| Treat `report_id` as the filing key | A retry can deliver the same report twice; the receiver decides what to do about that |
+
+The body, abridged to one device and one measurement:
+
+```json
+{
+  "report_id": "OMEGA_20260903",
+  "generated_at": 1788400000,
+  "period_start": 1788313600,
+  "period_end": 1788400000,
+  "devices": [
+    {
+      "device_id": "AMU_11",
+      "variables": {
+        "scd_co2": {
+          "n": 412, "n_missing": 0, "n_malformed": 0, "n_implausible": 3,
+          "min": 431.2, "max": 1180.0, "avg": 612.4, "median": 598.1, "sd": 121.7
+        }
+      }
+    }
+  ]
+}
+```
+
+`report_id` is `OMEGA_` plus the report's date in UTC. Times are Unix seconds.
+`n` counts the readings the statistics were computed from; the three `n_*`
+counters report what was set aside — absent, unreadable, or outside what the
+sensor can physically produce — so a thin day is visible as a thin day rather
+than hidden inside a confident-looking average.
 
 ---
 
@@ -302,6 +398,48 @@ nobody changes one by accident while looking for something else.
 | `deploy/.../install_server.sh` | `OMEGA_WEB_HOST` | Keeps the dashboard on the server's internal address only. Change it to `0.0.0.0` and the dashboard — including the buttons that revoke a box — answers anyone on the network with no certificate at all. |
 | Server | `OMEGA_PORT` / device port | Compiled into every box. Changing it on one side only means total silence with no error message. |
 | Anywhere | `ca-key.pem` | Never copy it anywhere it does not need to be. Anyone holding it can make a box your whole fleet will trust. |
+
+---
+
+## 11. What to restart after a change
+
+The commonest way for a change to appear not to work is that it worked and
+nothing has re-read it yet. Nothing here loses a reading: the dashboard and
+the telemetry listener are **separate services**, so restarting one leaves the
+other's device sessions untouched.
+
+**On the server:**
+
+| What you changed | What to do |
+|---|---|
+| `templates/index.html` — how the dashboard looks | `sudo systemctl restart omega-web` |
+| `app.py`, `device_api.py`, `device_live.py` — dashboard and its API | `sudo systemctl restart omega-web` |
+| `listener.py`, `session.py`, `storage.py`, `identity_guard.py`, `cause_validation.py`, `acks.py`, `discovery.py`, `nmu_mailbox.py` | `sudo systemctl restart omega-listener` |
+| `device_config.json` — allow-list, revocation, heartbeats | **Nothing.** Re-read automatically, effective on the next reading |
+| `/etc/cron.d/omega-maintenance` | **Nothing.** Cron re-reads the file itself |
+| `db_retention.py`, `daily_stats.py` | **Nothing.** Cron starts a fresh copy each night |
+| `/etc/systemd/system/omega-*.service` | `sudo systemctl daemon-reload` then restart that service |
+| The nginx site or the server certificate | `sudo systemctl reload nginx` |
+
+The dashboard is the one that catches people out. It is served with template
+caching on, deliberately — the alternative mode also exposes an interactive
+debugger on the network, on the machine holding the fleet's certificates. So
+the page is compiled once when the service starts, and **editing
+`index.html` on disk changes nothing until `omega-web` restarts.**
+
+To confirm a service came back:
+
+```bash
+systemctl is-active omega-listener omega-web
+journalctl -u omega-web -n 30 --no-pager
+```
+
+**On an air unit:** `sudo systemctl restart omega-amu` after editing
+`config/global.ini` or `amu_config.py`. Watch it with
+`journalctl -u omega-amu -f`.
+
+**On a noise unit:** there is no restart. Every setting is compiled in, so any
+change means reflashing the unit.
 
 ---
 
