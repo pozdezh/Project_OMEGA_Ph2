@@ -1,5 +1,7 @@
 # Omega user manual
 
+**Version 1.1 — 6 September 2026.**
+
 **What this is.** Everything you need to build the system, run it, and change
 it. No programming required. Commands are meant to be copied and pasted
 exactly as printed.
@@ -41,6 +43,15 @@ convenience — it lets you make a new box on the spot without fetching a drive.
 It can instead live only on a USB stick in a drawer, off the internet, and be
 plugged in just for the few minutes it takes to build a box. That stricter
 arrangement is [deploy/SETUP_MANUAL.md](deploy/SETUP_MANUAL.md), "Path B".
+
+> **Before you choose Path B, read this.** It is finished for the noise
+> boxes: their build kit reads the key straight off the drive and never copies
+> it to the server. The air-quality cards are not there yet — those tools
+> still expect the key in the server folder while a card is being written, so
+> it has to be placed there and removed again afterwards. Path B has not yet
+> been run from start to finish. `deploy/SETUP_MANUAL.md` gives the exact
+> steps and the workaround.
+
 Either way:
 
 > **Back up `ca-key.pem` together with `ca-cert.pem` to a second offline
