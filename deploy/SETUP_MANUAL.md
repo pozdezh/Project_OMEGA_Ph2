@@ -51,16 +51,33 @@ tooling - those phases never touch the CA - or install `arduino-cli` and
 `python3-cryptography` yourself.
 
 **Versions.** The version numbers this project ran on are recorded for
-provenance (`wolfssl` 5.9.2 on the server, `wolfssl@5.8.4` in the Arduino
-build, `esptool` 5.3.1, `arduino-cli` current at the time). When recreating
+provenance (`wolfssl` 5.9.2 on the server, `wolfssl@5.8.4` and
+`ArduinoJson@7.4.3` in the Arduino build, ESP32 Arduino core 3.3.11,
+`esptool` 5.3.1, `arduino-cli` current at the time). When recreating
 the system from scratch, install the **current release** of each of these
 rather than hunting for the exact build - none of the security properties
-depend on a specific patch version, and newer releases carry fixes. The one
-firm requirement is that the server-side stack provides **DTLS 1.3**
-(`wolfssl` does; the older `python3-dtls`/PyDTLS does not), and that the
-Arduino wolfSSL build has `WOLFSSL_SHA384` enabled if the AES-256 suite is
-wanted on the noise unit (Section on cipher suites). Re-run
+depend on a specific patch version, and newer releases carry fixes. Re-run
 `simlab/run_gate.py` after any version bump.
+
+Three requirements are firm rather than advisory:
+
+- The server-side stack must provide **DTLS 1.3**. `wolfssl` does; the older
+  `python3-dtls`/PyDTLS does not.
+- The Arduino wolfSSL build must have `WOLFSSL_SHA384` enabled **if** the
+  AES-256 suite is wanted on the noise unit. Left at the library default it
+  is absent, and the unit negotiates the 128-bit suite instead - which is
+  the mandatory-to-implement one, and the matched choice for its P-256 keys.
+- The air unit's **inbound live-query agent needs CPython 3.11**. The
+  wolfSSL binding mismanages thread state on its DTLS server path, and from
+  CPython 3.12 that latent bug becomes an instant fatal error, so on a Pi
+  shipping Python 3.13 the agent dies after serving one query. `install_amu.sh`
+  builds a local 3.11 for that one process; the telemetry service is
+  unaffected and keeps the system interpreter. If the local build is absent
+  the installer skips the agent and says so.
+
+The two ESP32 defaults worth knowing when comparing timings: the Arduino
+core clocks the CPU at 240 MHz where ESP-IDF defaults to 160 MHz, and the
+Arduino wolfSSL library links no hardware-crypto driver.
 
 ---
 
