@@ -35,3 +35,30 @@ pm_delta = 15
 temp_step = 1.5
 hum_step = 5
 lux_step = 100
+
+; --- Hysteresis: the value an alarm clears at ---------------------------
+; An alarm latches when a limit is crossed and lifts at a LOWER one, so a
+; reading hovering on the limit cannot flap between states. Leave a clear
+; value out and the trip value is used for both, which leaves only the
+; timing deadband below - the unit still works, it just flaps more.
+co2_critical_clear = 1300
+pm_critical_clear = 45
+temp_critical_high_clear = 29
+temp_critical_low_clear = 13
+hum_critical_high_clear = 67
+hum_critical_low_clear = 28
+lux_critical_high_clear = 750
+lux_critical_low_clear = 8
+
+; --- Hysteresis: the time an alarm must hold ----------------------------
+; Slow to raise, slower to drop. A limit must be crossed continuously for
+; alarm_sustain_s before the alarm latches, and released continuously for
+; alarm_clear_s before it lifts.
+alarm_sustain_s = 60
+alarm_clear_s = 120
+; A latched alarm re-announces on its own clock, independent of the
+; heartbeat, so raising the heartbeat to quieten a chatty site cannot also
+; quieten its alarms.
+alarm_repeat_s = 300
+; Floor between change-driven records. Alarms are not subject to it.
+min_send_interval_s = 60
